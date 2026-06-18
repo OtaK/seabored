@@ -1,4 +1,4 @@
-use crate::{ib, io::Write, mt::MajorType, ser::CborSerialize, types::CborIntegerValue};
+use crate::{io::Write, mt::MajorType, ser::CborSerialize, types::CborIntegerValue};
 
 const MAX_PREALLOC_CAPACITY: usize = 256;
 
@@ -6,6 +6,7 @@ const MAX_PREALLOC_CAPACITY: usize = 256;
 pub struct CborSequence<T: CborSerialize> {
     inner: Vec<T>,
     pub mt: MajorType,
+    #[cfg(feature = "allow-undefined-len-seq")]
     pub is_indefinite: bool,
 }
 
@@ -15,6 +16,7 @@ impl<T: CborSerialize> Default for CborSequence<T> {
         Self {
             inner: Default::default(),
             mt: MajorType::Array,
+            #[cfg(feature = "allow-undefined-len-seq")]
             is_indefinite: Default::default(),
         }
     }
@@ -26,11 +28,13 @@ impl<T: CborSerialize> CborSequence<T> {
         Self {
             inner: Vec::with_capacity(len.min(MAX_PREALLOC_CAPACITY)),
             mt,
+            #[cfg(feature = "allow-undefined-len-seq")]
             is_indefinite: false,
         }
     }
 
     #[inline(always)]
+    #[cfg(feature = "allow-undefined-len-seq")]
     pub fn new_indefinite(mt: MajorType) -> Self {
         Self {
             // Preallocate 4 entries (the allocation strategy is 0, 1, 4, 8, ...)
@@ -71,6 +75,7 @@ impl<T: CborSerialize> From<Vec<T>> for CborSequence<T> {
         Self {
             inner,
             mt: MajorType::Array,
+            #[cfg(feature = "allow-undefined-len-seq")]
             is_indefinite: false,
         }
     }
@@ -82,10 +87,16 @@ impl<T: CborSerialize> CborSerialize for CborSequence<T> {
         &self,
         writer: &mut W,
     ) -> Result<usize, crate::error::SeaboredSerError> {
-        let mut written = if self.is_indefinite {
-            writer.write(&[((self.mt as u8) << 5u8) | 0x1F])?
-        } else {
-            CborIntegerValue::from(self.inner.len())
+        let mut written = cfg_select! {
+            feature = "allow-undefined-len-seq" => {
+                if self.is_indefinite {
+                    writer.write(&[((self.mt as u8) << 5u8) | 0x1F])?
+                } else {
+                    CborIntegerValue::from(self.inner.len())
+                        .serialize_complex_mt_preamble(self.mt, writer)?
+                }
+            }
+            _ => CborIntegerValue::from(self.inner.len())
                 .serialize_complex_mt_preamble(self.mt, writer)?
         };
 
@@ -93,8 +104,9 @@ impl<T: CborSerialize> CborSerialize for CborSequence<T> {
             written += value.cbor_serialize_to(writer)?;
         }
 
+        #[cfg(feature = "allow-undefined-len-seq")]
         if self.is_indefinite {
-            written += writer.write(&[ib::consts::IB_BREAK])?;
+            written += writer.write(&[crate::ib::consts::IB_BREAK])?;
         }
 
         Ok(written)

@@ -70,6 +70,11 @@ pub enum SeaboredDeError<'a> {
     UnsupportedSimpleValue(u8),
     #[error("Indefinite len value - not an error that is supposed to be user-visible")]
     IndefiniteLen,
+    #[cfg(not(feature = "allow-undefined-len-seq"))]
+    #[error(
+        "Indefinite len sequence - enable the `allow-undefined-len-seq` feature to add support for them"
+    )]
+    IllegalIndefiniteLen,
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]

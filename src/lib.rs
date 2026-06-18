@@ -55,6 +55,7 @@ pub enum Value<'a> {
 
 impl Value<'_> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[allow(dead_code)]
     pub(crate) fn mt(&self) -> MajorType {
         match self {
             Value::Integer(cbor_int) => MajorType::from(cbor_int),
@@ -124,6 +125,7 @@ impl Value<'_> {
     }
 }
 
+#[cfg(feature = "allow-undefined-len-seq")]
 /// Builds an indefinite length Array
 impl<'a> FromIterator<Value<'a>> for Value<'a> {
     #[inline(always)]
@@ -133,7 +135,7 @@ impl<'a> FromIterator<Value<'a>> for Value<'a> {
         Self::Sequence(seq)
     }
 }
-
+#[cfg(feature = "allow-undefined-len-seq")]
 /// Builds an indefinite length Map
 impl<'a> FromIterator<(Value<'a>, Value<'a>)> for Value<'a> {
     #[inline(always)]

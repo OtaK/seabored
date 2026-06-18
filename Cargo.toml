@@ -22,6 +22,8 @@ rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
 [features]
 default = ["inline-nontrivial"]
+# Allows RFC8949 Undefined Length Sequences, which are forbidden in preferred-plus
+allow-undefined-len-seq = []
 # Enables inlining on non-trivial functions to increase performance at the cost of code size
 inline-nontrivial = []
 serde = ["dep:serde"]
@@ -46,7 +48,7 @@ features = ["binary", "simd"]
 wasm-bindgen-test = "0.3"
 hex-literal = "1"
 pretty_assertions = "1"
-seabored = { path = ".", features = ["inline-nontrivial", "serde"] }
+seabored = { path = ".", features = ["inline-nontrivial", "allow-undefined-len-seq", "serde"] }
 color-eyre = "0.6"
 divan = "0.1"
 serde_tuple = "1"

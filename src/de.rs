@@ -48,35 +48,40 @@ impl<'a> CborDeserialize<'a> for Value<'a> {
             AdditionalInfoAction::Uint32 => CborIntegerValue::from(reader.read_be_u32()?),
             AdditionalInfoAction::Uint64 => CborIntegerValue::from(reader.read_be_u64()?),
             AdditionalInfoAction::IndefiniteLenSeq => {
-                return match mt {
-                    MajorType::Bytes | MajorType::String | MajorType::Array => {
-                        let mut seq = CborSequence::new_indefinite(mt);
-                        while reader.peek_byte()? != ib::consts::IB_BREAK {
-                            seq.push(Value::cbor_deserialize_from(reader)?)
-                        }
-                        reader.advance(1)?; // Skip over the BREAK byte
-                        Ok(Value::Sequence(seq))
+                cfg_select! {
+                    feature = "allow-undefined-len-seq" => {
+                        return match mt {
+                            MajorType::Bytes | MajorType::String | MajorType::Array => {
+                                let mut seq = CborSequence::new_indefinite(mt);
+                                while reader.peek_byte()? != ib::consts::IB_BREAK {
+                                    seq.push(Value::cbor_deserialize_from(reader)?)
+                                }
+                                reader.advance(1)?; // Skip over the BREAK byte
+                                Ok(Value::Sequence(seq))
+                            }
+                            MajorType::Map => {
+                                let mut seq = CborSequence::new_indefinite(mt);
+                                while reader.peek_byte()? != ib::consts::IB_BREAK {
+                                    seq.push(<(Value, Value)>::cbor_deserialize_from(reader)?)
+                                }
+                                reader.advance(1)?; // Skip over the BREAK byte
+                                Ok(Value::Map(seq))
+                            }
+                            _ => {
+                                return Err(SeaboredDeError::IncorrectMajorType {
+                                    actual: mt,
+                                    expected: &[
+                                        MajorType::Bytes,
+                                        MajorType::String,
+                                        MajorType::Array,
+                                        MajorType::Map,
+                                    ],
+                                });
+                            }
+                        };
                     }
-                    MajorType::Map => {
-                        let mut seq = CborSequence::new_indefinite(mt);
-                        while reader.peek_byte()? != ib::consts::IB_BREAK {
-                            seq.push(<(Value, Value)>::cbor_deserialize_from(reader)?)
-                        }
-                        reader.advance(1)?; // Skip over the BREAK byte
-                        Ok(Value::Map(seq))
-                    }
-                    _ => {
-                        return Err(SeaboredDeError::IncorrectMajorType {
-                            actual: mt,
-                            expected: &[
-                                MajorType::Bytes,
-                                MajorType::String,
-                                MajorType::Array,
-                                MajorType::Map,
-                            ],
-                        });
-                    }
-                };
+                    _ => return Err(SeaboredDeError::IllegalIndefiniteLen),
+                }
             }
         };
 
@@ -222,6 +227,7 @@ fn take_map<'i>(
     Ok(Value::Map(seq).into())
 }
 
+#[cfg(feature = "allow-undefined-len-seq")]
 #[inline(always)]
 fn take_sequence<'i>(
     input: &mut Stream<'i>,
@@ -249,6 +255,7 @@ fn take_sequence<'i>(
     Ok(Value::Sequence(seq).into())
 }
 
+#[cfg(feature = "allow-undefined-len-seq")]
 #[inline(always)]
 fn take_sequence_map<'i>(
     input: &mut Stream<'i>,
@@ -338,13 +345,18 @@ fn parse_value_inner<'i>(
             .map(CborIntegerValue::from)
             .parse_next(input)?,
         AdditionalInfoAction::IndefiniteLenSeq => {
-            return match mt {
-                MajorType::String | MajorType::Bytes | MajorType::Array => {
-                    Ok(take_sequence(input, mt)?)
+            cfg_select! {
+                feature = "allow-undefined-len-seq" => {
+                    return match mt {
+                        MajorType::String | MajorType::Bytes | MajorType::Array => {
+                            Ok(take_sequence(input, mt)?)
+                        }
+                        MajorType::Map => Ok(take_sequence_map(input)?),
+                        _ => cut_err(input),
+                    };
                 }
-                MajorType::Map => Ok(take_sequence_map(input)?),
-                _ => cut_err(input),
-            };
+                _ => return Err(SeaboredDeError::IllegalIndefiniteLen),
+            }
         }
     };
 

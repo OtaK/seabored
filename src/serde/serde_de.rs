@@ -312,7 +312,10 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         let len = ai.find_subsequent_len(&mut self.reader)?;
         visitor.visit_seq(SeqAccessor {
             parent: self,
+            #[cfg(feature = "allow-undefined-len-seq")]
             len: Some(len.try_into()?),
+            #[cfg(not(feature = "allow-undefined-len-seq"))]
+            len: len.try_into()?,
         })
     }
 
@@ -342,7 +345,10 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
 
         visitor.visit_seq(SeqAccessor {
             parent: self,
+            #[cfg(feature = "allow-undefined-len-seq")]
             len: Some(len),
+            #[cfg(not(feature = "allow-undefined-len-seq"))]
+            len: len,
         })
     }
 
@@ -376,7 +382,10 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         let len = ai.find_subsequent_len(&mut self.reader)?;
         visitor.visit_map(SeqAccessor {
             parent: self,
+            #[cfg(feature = "allow-undefined-len-seq")]
             len: Some(len.try_into()?),
+            #[cfg(not(feature = "allow-undefined-len-seq"))]
+            len: len.try_into()?,
         })
     }
 
@@ -585,10 +594,29 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de> for &mut SimpleValueAccesso
 
 struct SeqAccessor<'a, 'de, R: Read<'de>> {
     parent: &'a mut Deserializer<'de, R>,
+    #[cfg(feature = "allow-undefined-len-seq")]
     len: Option<usize>,
+    #[cfg(not(feature = "allow-undefined-len-seq"))]
+    len: usize,
 }
 
 impl<'a, 'de, R: Read<'de>> SeqAccessor<'a, 'de, R> {
+    #[cfg(not(feature = "allow-undefined-len-seq"))]
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn deser_from_seed<S: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: S,
+    ) -> Result<Option<S::Value>, SeaboredDeError<'de>> {
+        Ok(if self.len > 0 {
+            let value = seed.deserialize(&mut *self.parent)?;
+            self.len -= 1;
+            Some(value)
+        } else {
+            None
+        })
+    }
+
+    #[cfg(feature = "allow-undefined-len-seq")]
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deser_from_seed<S: serde::de::DeserializeSeed<'de>>(
         &mut self,
@@ -626,9 +654,16 @@ impl<'a, 'de, R: Read<'de>> serde::de::SeqAccess<'de> for SeqAccessor<'a, 'de, R
         self.deser_from_seed(seed)
     }
 
+    #[cfg(feature = "allow-undefined-len-seq")]
     #[inline(always)]
     fn size_hint(&self) -> Option<usize> {
         self.len
+    }
+
+    #[cfg(not(feature = "allow-undefined-len-seq"))]
+    #[inline(always)]
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.len)
     }
 }
 
@@ -651,8 +686,15 @@ impl<'a, 'de, R: Read<'de>> serde::de::MapAccess<'de> for SeqAccessor<'a, 'de, R
         seed.deserialize(&mut *self.parent)
     }
 
+    #[cfg(feature = "allow-undefined-len-seq")]
     #[inline(always)]
     fn size_hint(&self) -> Option<usize> {
         self.len
+    }
+
+    #[cfg(not(feature = "allow-undefined-len-seq"))]
+    #[inline(always)]
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.len)
     }
 }
