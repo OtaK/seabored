@@ -1,5 +1,7 @@
 mod float;
 mod integer;
+#[cfg(feature = "hazmat")]
+mod raw;
 mod seq;
 
 use std::borrow::Cow;
@@ -7,6 +9,8 @@ use std::borrow::Cow;
 pub use float::CborFloat;
 pub use integer::CborInteger;
 pub(crate) use integer::{CborIntegerValue, IB_LIMIT};
+#[cfg(feature = "hazmat")]
+pub use raw::RawValue;
 pub use seq::CborSequence;
 
 use crate::{de::CborDeserialize, ib::InitialByte, ser::CborSerialize};

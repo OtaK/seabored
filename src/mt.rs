@@ -1,6 +1,6 @@
 use crate::ib::InitialByte;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 /// CBOR Major Type
 pub enum MajorType {

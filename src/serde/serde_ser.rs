@@ -173,6 +173,15 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
             };
         }
 
+        #[cfg(feature = "hazmat")]
+        if name == crate::types::RawValue::TYP_NAME {
+            // SAFETY: The newtype-struct name sentinel guarantees that T == RawValue.
+            // RawValue is #[repr(transparent)] over Vec<u8>, so the pointer cast is sound.
+            let raw: &crate::types::RawValue =
+                unsafe { std::mem::transmute(value as *const T as *const crate::types::RawValue) };
+            return self.writer.write(raw.as_bytes());
+        }
+
         if name == DYN_TAGGED_TYP_NAME {
             // SAFETY: If we get this type name, then treat the value as a DynamicTaggedValue ref
             let dyn_tagged: &DynamicTaggedValue =

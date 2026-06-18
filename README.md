@@ -37,6 +37,7 @@ If you want examples, please head to the `benches` folder.
 - `inline-nontrivial`: Enabled by default, adds the `#[inline]` attributes to most non-trivial functions. This is for performance at the cost of codesize (even though those reports are usually greatly exaggerated). Disable it (by using `default-features = false`) if you absolutely need smol code size.
 - `serde`: Enables Serde compatibility
 - `facet`: Enables Facet compatibility (does nothing for now: TODO)
+- `hazmat`: Enables dangerous features (`RawValue`)
 
 ## Roadmap
 

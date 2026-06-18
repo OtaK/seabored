@@ -27,6 +27,8 @@ inline-nontrivial = []
 serde = ["dep:serde"]
 facet = ["dep:facet", "dep:facet-core", "dep:facet-reflect"]
 derive = []
+# Enable dangerous features
+hazmat = []
 
 [dependencies]
 thiserror = "2"
