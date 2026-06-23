@@ -62,7 +62,7 @@ impl<'de> CborDeserialize<'de> for Cow<'de, str> {
     fn cbor_deserialize_from<R: crate::io::Read<'de>>(
         reader: &mut R,
     ) -> Result<Self, crate::error::SeaboredDeError<'de>> {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
+        let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != crate::mt::MajorType::String {
             return Err(crate::error::SeaboredDeError::IncorrectMajorType {
@@ -70,6 +70,8 @@ impl<'de> CborDeserialize<'de> for Cow<'de, str> {
                 expected: &[crate::mt::MajorType::String],
             });
         }
+
+        reader.advance(1)?;
 
         let len = ai.find_subsequent_len(reader)?;
         Ok(match reader.read_slice(len.try_into()?)? {
@@ -98,7 +100,7 @@ impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
     fn cbor_deserialize_from<R: crate::io::Read<'de>>(
         reader: &mut R,
     ) -> Result<Self, crate::error::SeaboredDeError<'de>> {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
+        let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != crate::mt::MajorType::Bytes {
             return Err(crate::error::SeaboredDeError::IncorrectMajorType {
@@ -106,6 +108,8 @@ impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
                 expected: &[crate::mt::MajorType::Bytes],
             });
         }
+
+        reader.advance(1)?;
 
         let len = ai.find_subsequent_len(reader)?;
         reader.read_slice(len.try_into()?)

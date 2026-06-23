@@ -226,13 +226,15 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+        let ib = InitialByte::peek(&mut self.reader)?;
         if ib.0 != ib::consts::IB_UNDEFINED {
             return Err(SeaboredDeError::IncorrectMajorType {
                 actual: ib.mt(),
                 expected: &[MajorType::SimpleValueOrFloat],
             });
         }
+
+        self.reader.advance(1)?;
 
         visitor.visit_unit()
     }
@@ -300,7 +302,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+        let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != MajorType::Array {
             return Err(SeaboredDeError::IncorrectMajorType {
@@ -308,6 +310,8 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
                 expected: &[MajorType::Array],
             });
         }
+
+        self.reader.advance(1)?;
 
         let len = ai.find_subsequent_len(&mut self.reader)?;
         visitor.visit_seq(SeqAccessor {
@@ -321,7 +325,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+        let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != MajorType::Array {
             return Err(SeaboredDeError::IncorrectMajorType {
@@ -329,6 +333,8 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
                 expected: &[MajorType::Array],
             });
         }
+
+        self.reader.advance(1)?;
 
         // Consume any subsequent length bytes so the reader is positioned at the first element.
         let _deser_len = ai.find_subsequent_len(&mut self.reader)?;
@@ -364,7 +370,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+        let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != MajorType::Map {
             return Err(SeaboredDeError::IncorrectMajorType {
@@ -372,6 +378,8 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
                 expected: &[MajorType::Map],
             });
         }
+
+        self.reader.advance(1)?;
 
         let len = ai.find_subsequent_len(&mut self.reader)?;
         visitor.visit_map(SeqAccessor {
@@ -550,7 +558,7 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de> for &mut SimpleValueAccesso
     where
         V: serde::de::Visitor<'de>,
     {
-        let ib = InitialByte::cbor_deserialize_from(&mut self.parent.reader)?;
+        let ib = InitialByte::peek(&mut self.parent.reader)?;
         let mt = ib.mt();
         if mt != MajorType::SimpleValueOrFloat {
             return Err(SeaboredDeError::IncorrectMajorType {
@@ -558,6 +566,8 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de> for &mut SimpleValueAccesso
                 expected: &[MajorType::SimpleValueOrFloat],
             });
         }
+
+        self.parent.reader.advance(1)?;
 
         let u8_value = match ib.0 {
             value @ ib::consts::IB_SIMPLE_VALUE..ib::consts::IB_FALSE => {
