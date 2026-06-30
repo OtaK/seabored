@@ -17,6 +17,7 @@ authors = ["Mathieu Amiot <amiot.mathieu@gmail.com>"]
 features = [
     "serde",
     "facet",
+    "hazmat"
 ]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
