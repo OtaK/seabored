@@ -1,6 +1,6 @@
 [package]
 name = "seabored"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 rust-version = "1.95"
 include = ["src/**/*", "LICENSE-*", "README.md"]
