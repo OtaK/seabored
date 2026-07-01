@@ -3,8 +3,6 @@ use hex_literal::hex;
 use seabored::{de::CborDeserialize, ib::InitialByte};
 use std::hint::black_box;
 
-// TODO: Migrate to gungraun
-
 #[library_benchmark]
 fn de_ib() -> InitialByte {
     black_box(InitialByte::cbor_deserialize_from(black_box(&mut &hex!("FF")[..])).unwrap())
