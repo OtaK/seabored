@@ -2,10 +2,11 @@ use crate::{
     Value,
     error::SeaboredSerError,
     ib,
-    io::Write,
     mt::MajorType,
     types::{CborIntegerValue, IB_LIMIT},
 };
+
+use parsio::Write;
 
 pub trait CborSerialize {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError>;

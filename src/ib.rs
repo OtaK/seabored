@@ -1,6 +1,8 @@
 use crate::{
-    de::CborDeserialize, error::SeaboredDeError, io::Read, mt::MajorType, types::CborIntegerValue,
+    de::CborDeserialize, error::SeaboredDeError, io::ReadExt as _, mt::MajorType,
+    types::CborIntegerValue,
 };
+use parsio::Read;
 
 pub mod consts {
     pub const IB_SMALL_UINT: u8 = 0x00;
@@ -81,7 +83,7 @@ impl From<MajorType> for InitialByte {
 impl<'a> CborDeserialize<'a> for InitialByte {
     #[inline(always)]
     fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError<'a>> {
-        reader.read_byte().map(InitialByte)
+        reader.read_byte().map(InitialByte).map_err(Into::into)
     }
 }
 
@@ -112,7 +114,7 @@ impl InitialByte {
 
     #[inline(always)]
     pub fn peek<'a, R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError<'a>> {
-        reader.peek_byte().map(Self)
+        reader.peek_byte().map(Self).map_err(Into::into)
     }
 }
 

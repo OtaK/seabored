@@ -5,10 +5,9 @@ pub use serde_ser::Serializer;
 mod serde_de;
 pub use serde_de::Deserializer;
 
-use crate::{
-    io::{Read, Write},
-    types::CborIntegerValue,
-};
+use parsio::{Read, Write};
+
+use crate::types::CborIntegerValue;
 
 /// Wrapper for Tagged CBOR values
 /// This makes sure the tag is used when deserializing and emitted when serializing

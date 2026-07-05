@@ -1,4 +1,5 @@
 use half::f16;
+use parsio::Read;
 use std::borrow::Cow;
 use winnow::{Parser, error::ParserError as _};
 
@@ -6,7 +7,7 @@ use crate::{
     SyntacticValue, Value,
     error::SeaboredDeError,
     ib::{self, AdditionalInfoAction, InitialByte},
-    io::Read,
+    io::ReadExt as _,
     mt::MajorType,
     types::{CborFloat, CborInteger, CborIntegerValue, CborSequence},
 };

@@ -2,6 +2,8 @@ use crate::mt::MajorType;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeaboredSerError {
+    #[error(transparent)]
+    Parsio(#[from] parsio::WriteError),
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("I/O Error: {0}")]
@@ -27,6 +29,8 @@ pub struct WinnowError<'a> {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SeaboredDeError<'a> {
+    #[error(transparent)]
+    Parsio(#[from] parsio::ReadError),
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("I/O Error: {0}")]
@@ -75,6 +79,12 @@ pub enum SeaboredDeError<'a> {
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     Serde(String),
+    #[cfg(feature = "facet")]
+    #[error("The Facet Scalar Type {0:?} is unsupported")]
+    UnsupportedFacetScalar(facet::ScalarType),
+    #[cfg(feature = "facet")]
+    #[error(transparent)]
+    FacetReflectError(#[from] facet_reflect::ReflectError),
 }
 
 impl<'a> From<winnow::error::ContextError<&'a [u8]>> for SeaboredDeError<'a> {

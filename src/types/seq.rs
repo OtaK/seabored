@@ -1,4 +1,5 @@
-use crate::{ib, io::Write, mt::MajorType, ser::CborSerialize, types::CborIntegerValue};
+use crate::{ib, mt::MajorType, ser::CborSerialize, types::CborIntegerValue};
+use parsio::Write;
 
 const MAX_PREALLOC_CAPACITY: usize = 256;
 

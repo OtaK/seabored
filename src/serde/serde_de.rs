@@ -4,10 +4,11 @@ use crate::{
     de::CborDeserialize,
     error::SeaboredDeError,
     ib::{self, InitialByte},
-    io::Read,
     mt::MajorType,
     serde::{DYN_TAGGED_TYP_NAME, SimpleValue, parse_tag_from_typ},
 };
+
+use parsio::Read;
 
 impl serde::de::Error for SeaboredDeError<'_> {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {

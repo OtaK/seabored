@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use crate::{error::SeaboredSerError, io::Write, ser::CborSerialize};
+use crate::{error::SeaboredSerError, ser::CborSerialize};
+use parsio::Write;
 
 /// A raw, pre-encoded CBOR value backed by a byte buffer
 ///
@@ -64,7 +65,7 @@ impl CborSerialize for RawValue<'_> {
     /// Writes the raw CBOR bytes verbatim into `writer`
     #[inline(always)]
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
-        writer.write(&self.0)
+        writer.write(&self.0).map_err(Into::into)
     }
 }
 

@@ -34,6 +34,7 @@ hazmat = []
 [dependencies]
 thiserror = "2"
 half = "2"
+parsio = { version = "0.0.1", features = ["std"] }
 simdutf8 = "0.1"
 serde = { version = "1", optional = true }
 facet = { version = "0.46", optional = true }
@@ -82,6 +83,6 @@ harness = false
 [profile.bench]
 opt-level = 3
 debug = true
-lto = 'fat'
+lto = "thin"
 debug-assertions = false
 codegen-units = 1

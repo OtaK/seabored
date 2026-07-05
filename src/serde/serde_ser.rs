@@ -3,12 +3,13 @@ use serde::Serialize;
 use crate::{
     error::SeaboredSerError,
     ib,
-    io::Write,
     mt::MajorType,
     ser::CborSerialize,
     serde::{DYN_TAGGED_TYP_NAME, DynamicTaggedValue, SimpleValue, parse_tag_from_typ},
     types::CborIntegerValue,
 };
+
+use parsio::Write;
 
 impl serde::ser::Error for SeaboredSerError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
@@ -116,7 +117,9 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
 
     #[inline(always)]
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        self.writer.write(&[ib::consts::IB_NULL])
+        self.writer
+            .write(&[ib::consts::IB_NULL])
+            .map_err(Into::into)
     }
 
     #[inline(always)]
@@ -129,7 +132,9 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
 
     #[inline(always)]
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        self.writer.write(&[ib::consts::IB_UNDEFINED])
+        self.writer
+            .write(&[ib::consts::IB_UNDEFINED])
+            .map_err(Into::into)
     }
 
     #[inline(always)]
@@ -170,7 +175,8 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
             } else {
                 self.writer
                     .write(&[ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE, sv])
-            };
+            }
+            .map_err(Into::into);
         }
 
         #[cfg(feature = "hazmat")]
@@ -179,7 +185,7 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
             // RawValue is #[repr(transparent)] over Vec<u8>, so the pointer cast is sound.
             let raw: &crate::types::RawValue =
                 unsafe { std::mem::transmute(value as *const T as *const crate::types::RawValue) };
-            return self.writer.write(raw.as_bytes());
+            return self.writer.write(raw.as_bytes()).map_err(Into::into);
         }
 
         if name == DYN_TAGGED_TYP_NAME {

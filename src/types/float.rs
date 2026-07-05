@@ -4,9 +4,11 @@ use crate::{
     de::CborDeserialize,
     error::{SeaboredDeError, SeaboredSerError},
     ib::{self, InitialByte},
-    io::{Read, Write},
+    io::ReadExt as _,
     ser::CborSerialize,
 };
+
+use parsio::{Read, Write};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 // #[cfg_attr(
@@ -174,7 +176,7 @@ impl CborSerialize for f16 {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         let mut buf = [ib::consts::IB_FLOAT_16, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }
 
@@ -195,7 +197,7 @@ impl CborSerialize for f32 {
 
         let mut buf = [ib::consts::IB_FLOAT_32, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }
 
@@ -213,6 +215,6 @@ impl CborSerialize for f64 {
 
         let mut buf = [ib::consts::IB_FLOAT_64, 0, 0, 0, 0, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }
