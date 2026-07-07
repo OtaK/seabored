@@ -11,11 +11,11 @@ use crate::{
 use parsio::{Read, Write};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-// #[cfg_attr(
-//     feature = "serde",
-//     derive(serde::Serialize, serde::Deserialize),
-//     serde(transparent)
-// )]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
 #[repr(transparent)]
 pub struct CborFloat(f64);
 

@@ -1,11 +1,12 @@
 use serde::Deserialize;
 
 use crate::{
+    adapters::{DYN_TAGGED_TYP_NAME, SimpleValue, parse_tag_from_typ, serde::Deserializer},
     de::CborDeserialize,
     error::SeaboredDeError,
     ib::{self, InitialByte},
     mt::MajorType,
-    serde::{DYN_TAGGED_TYP_NAME, SimpleValue, parse_tag_from_typ},
+    serde::TAG,
 };
 
 use parsio::Read;
@@ -13,20 +14,6 @@ use parsio::Read;
 impl serde::de::Error for SeaboredDeError<'_> {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         Self::Serde(msg.to_string())
-    }
-}
-
-pub struct Deserializer<'de, R: Read<'de>> {
-    reader: R,
-    _marker: std::marker::PhantomData<&'de ()>,
-}
-
-impl<'de, R: Read<'de>> Deserializer<'de, R> {
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            _marker: Default::default(),
-        }
     }
 }
 
@@ -505,11 +492,6 @@ pub(crate) struct DynamicTaggedValueAccessor<'a, 'de, R: Read<'de>> {
     parent: &'a mut Deserializer<'de, R>,
 }
 
-// Lil hack to pass over the serde fence
-thread_local! {
-    pub(crate) static TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
 impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de>
     for &mut DynamicTaggedValueAccessor<'a, 'de, R>
 {
@@ -681,7 +663,7 @@ mod tests {
 
     #[wasm_bindgen_test::wasm_bindgen_test(unsupported = test)]
     fn indefinite_seq_map_struct() {
-        let v = crate::serde::from_slice::<IndefiniteSeqMapStruct>(
+        let v = crate::adapters::serde::from_slice::<IndefiniteSeqMapStruct>(
             &mut &hex_literal::hex!(
                 "BF6474657374781F7468697274792D6F6E657468697274792D6F6E657468697274792D6F6E6531FF"
             )[..],

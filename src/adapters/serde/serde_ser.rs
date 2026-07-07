@@ -1,11 +1,13 @@
 use serde::Serialize;
 
 use crate::{
+    adapters::{
+        DYN_TAGGED_TYP_NAME, DynamicTaggedValue, SimpleValue, parse_tag_from_typ, serde::Serializer,
+    },
     error::SeaboredSerError,
     ib,
     mt::MajorType,
     ser::CborSerialize,
-    serde::{DYN_TAGGED_TYP_NAME, DynamicTaggedValue, SimpleValue, parse_tag_from_typ},
     types::CborIntegerValue,
 };
 
@@ -15,10 +17,6 @@ impl serde::ser::Error for SeaboredSerError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         Self::Serde(msg.to_string())
     }
-}
-
-pub struct Serializer<W: Write> {
-    pub(crate) writer: W,
 }
 
 impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {

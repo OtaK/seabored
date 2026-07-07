@@ -36,7 +36,7 @@ If you want examples, please head to the `benches` folder.
 
 - `inline-nontrivial`: Enabled by default, adds the `#[inline]` attributes to most non-trivial functions. This is for performance at the cost of codesize (even though those reports are usually greatly exaggerated). Disable it (by using `default-features = false`) if you absolutely need smol code size.
 - `serde`: Enables Serde compatibility
-- `facet`: Enables Facet compatibility (does nothing for now: TODO)
+- `facet`: Enables Facet compatibility (done but untested, YMMV)
 - `hazmat`: Enables dangerous features (`RawValue`)
 
 ## Roadmap
@@ -45,7 +45,7 @@ If you want examples, please head to the `benches` folder.
 - [ ] Add CBOR RFC compat feature flag, to reduce branches
 - [ ] Make a homebrew derive for people who don't care about serde/facet/etc
   - This would have more power as you'll be able to be more in control as to how stuff gets de/serialized (like tags, simple values, etc)
-- [ ] Facet compat
+- [x] Facet compat
 - [ ] Improve performance (yes, there's still some to get)
 - [ ] Docs improvements, examples, etc
 

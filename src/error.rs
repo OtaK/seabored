@@ -17,6 +17,9 @@ pub enum SeaboredSerError {
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     Serde(String),
+    #[cfg(feature = "facet")]
+    #[error(transparent)]
+    FacetError(#[from] FacetError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +27,29 @@ pub enum SeaboredSerError {
 pub struct WinnowError<'a> {
     inner: winnow::error::ContextError<&'a [u8]>,
     external: Option<&'a (dyn std::error::Error + 'static)>,
+}
+
+#[cfg(feature = "facet")]
+#[derive(Debug, thiserror::Error)]
+pub enum FacetError {
+    #[error("The Facet Scalar Type {0:?} is unsupported")]
+    UnsupportedFacetScalar(facet::ScalarType),
+    #[error("The Facet value Type {0:?} is unsupported")]
+    UnsupportedFacetType(facet::Type),
+    #[error("Facet enum variant is unknown: {0}")]
+    UnknownFacetEnumVariant(String),
+    #[error("Facet field {0} is missing")]
+    MissingField(usize),
+    #[error(transparent)]
+    FieldError(#[from] facet::FieldError),
+    #[error(transparent)]
+    VariantError(#[from] facet_reflect::VariantError),
+    #[error(transparent)]
+    FacetReflectError(#[from] facet_reflect::ReflectError),
+    #[error(transparent)]
+    FacetReflectShapeMismatchError(#[from] facet_reflect::ShapeMismatchError),
+    #[error(transparent)]
+    FacetReflectAllocError(#[from] facet_reflect::AllocError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,17 +100,16 @@ pub enum SeaboredDeError<'a> {
     UnsupportedSimpleValue(u8),
     #[error("Indefinite len value - not an error that is supposed to be user-visible")]
     IndefiniteLen,
+    #[error("A CBOR Sequence has the wrong number of elements, expected {expected}, but got {got}")]
+    WrongLen { expected: usize, got: usize },
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     Serde(String),
     #[cfg(feature = "facet")]
-    #[error("The Facet Scalar Type {0:?} is unsupported")]
-    UnsupportedFacetScalar(facet::ScalarType),
-    #[cfg(feature = "facet")]
     #[error(transparent)]
-    FacetReflectError(#[from] facet_reflect::ReflectError),
+    FacetError(#[from] FacetError),
 }
 
 impl<'a> From<winnow::error::ContextError<&'a [u8]>> for SeaboredDeError<'a> {

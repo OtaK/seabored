@@ -64,14 +64,17 @@ mod serde {
         bencher: divan::Bencher,
     ) {
         let sample = T::sample();
-        let value = seabored::serde::from_slice::<T>(sample).unwrap();
-        let capacity = seabored::serde::to_vec(&value).unwrap().len();
+        let value = seabored::adapters::serde::from_slice::<T>(sample).unwrap();
+        let capacity = seabored::adapters::serde::to_vec(&value).unwrap().len();
 
         bencher
             .counter(BytesCount::new(capacity))
             .with_inputs(|| Vec::with_capacity(capacity))
             .bench_local_refs(|buf| {
-                black_box(seabored::serde::to_writer(black_box(buf), black_box(&value)).unwrap());
+                black_box(
+                    seabored::adapters::serde::to_writer(black_box(buf), black_box(&value))
+                        .unwrap(),
+                );
             });
     }
 
@@ -91,7 +94,7 @@ mod serde {
         bencher
             .counter(BytesCount::of_slice(sample))
             .bench_local(|| {
-                black_box(seabored::serde::from_slice::<T>(black_box(sample)).unwrap());
+                black_box(seabored::adapters::serde::from_slice::<T>(black_box(sample)).unwrap());
             });
     }
 }

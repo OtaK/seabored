@@ -86,12 +86,17 @@ fn serde_bench_with_group_and_sample_seabored<
     });
 
     group.bench_function("serde-ser", |b| {
-        let value = seabored::serde::from_slice::<T>(sample).unwrap();
-        let capacity = seabored::serde::to_vec(&value).unwrap().len();
+        let value = seabored::adapters::serde::from_slice::<T>(sample).unwrap();
+        let capacity = seabored::adapters::serde::to_vec(&value).unwrap().len();
 
         b.iter_batched_ref(
             || black_box(Vec::with_capacity(capacity)),
-            |buf| black_box(seabored::serde::to_writer(black_box(buf), black_box(&value)).unwrap()),
+            |buf| {
+                black_box(
+                    seabored::adapters::serde::to_writer(black_box(buf), black_box(&value))
+                        .unwrap(),
+                )
+            },
             BatchSize::SmallInput,
         );
     });

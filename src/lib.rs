@@ -1,8 +1,13 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "facet")]
+compile_error!("The `facet` feature isn't ready for prime-time yet");
+
 use crate::mt::MajorType;
 
+#[cfg(any(feature = "serde", feature = "facet"))]
+pub mod adapters;
 pub mod de;
 pub mod ib;
 pub mod io;
@@ -12,6 +17,10 @@ pub mod types;
 
 pub mod error;
 
+// Compat to prevent breaking changes
+#[cfg(feature = "serde")]
+pub use crate::adapters::serde;
+
 // TODO: Homebrew a derive for CBOR specifics (like p+ or dcbor profiles, tags, simple values etc)
 #[cfg(feature = "derive")]
 mod derive {}
@@ -19,11 +28,6 @@ mod derive {}
 pub mod reexports {
     pub use half;
 }
-
-#[cfg(feature = "facet")]
-pub mod facet;
-#[cfg(feature = "serde")]
-pub mod serde;
 
 #[derive(Debug, Clone)]
 pub(crate) enum SyntacticValue<'a> {
@@ -182,15 +186,15 @@ impl ::serde::Serialize for Value<'_> {
                 seqmap.end()
             }
             Value::Tagged((tag, value)) => serializer.serialize_newtype_struct(
-                crate::serde::DYN_TAGGED_TYP_NAME,
-                &crate::serde::DynamicTaggedValue {
+                crate::adapters::DYN_TAGGED_TYP_NAME,
+                &crate::adapters::DynamicTaggedValue {
                     tag: *tag,
                     value: std::borrow::Cow::Borrowed(value.as_ref()),
                 },
             ),
             Value::SimpleValue(v) => serializer.serialize_newtype_struct(
-                crate::serde::SimpleValue::TYP_NAME,
-                &crate::serde::SimpleValue(*v),
+                crate::adapters::SimpleValue::TYP_NAME,
+                &crate::adapters::SimpleValue(*v),
             ),
             Value::Bool(v) => serializer.serialize_bool(*v),
             Value::Null => serializer.serialize_none(),
@@ -327,7 +331,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
                 D: ::serde::Deserializer<'de>,
             {
                 use ::serde::Deserialize as _;
-                let dtv = crate::serde::DynamicTaggedValue::deserialize(deserializer)?;
+                let dtv = crate::adapters::DynamicTaggedValue::deserialize(deserializer)?;
                 Ok(Value::Tagged((dtv.tag, Box::new(dtv.value.into_owned()))))
             }
 
