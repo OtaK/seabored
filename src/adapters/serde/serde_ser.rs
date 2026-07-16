@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 use crate::{
     adapters::{
         DYN_TAGGED_TYP_NAME, DynamicTaggedValue, SimpleValue, parse_tag_from_typ, serde::Serializer,
@@ -13,13 +11,13 @@ use crate::{
 
 use parsio::Write;
 
-impl serde::ser::Error for SeaboredSerError {
+impl ::serde_core::ser::Error for SeaboredSerError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         Self::Serde(msg.to_string())
     }
 }
 
-impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
+impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
@@ -123,7 +121,7 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
     #[inline(always)]
     fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         value.serialize(self)
     }
@@ -157,7 +155,7 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         if name == SimpleValue::TYP_NAME {
             // SAFETY: Because of the newtype struct name match, and the fact
@@ -197,6 +195,7 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
                 .serialize_complex_mt_preamble(MajorType::Tagged, &mut self.writer)?;
 
             // And value
+            use ::serde_core::Serialize as _;
             return Ok(written + dyn_tagged.value.serialize(self)?);
         }
 
@@ -222,7 +221,7 @@ impl<'a, W: Write> serde::Serializer for &'a mut Serializer<W> {
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         // Map len 1
         let mut written = CborIntegerValue::from(1u8)
@@ -363,14 +362,14 @@ pub struct SequenceSerializer<'a, W: Write> {
     parent: &'a mut Serializer<W>,
 }
 
-impl<W: Write> serde::ser::SerializeSeq for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeSeq for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += value.serialize(&mut *self.parent)?;
         Ok(())
@@ -385,14 +384,14 @@ impl<W: Write> serde::ser::SerializeSeq for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeTuple for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeTuple for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += value.serialize(&mut *self.parent)?;
         Ok(())
@@ -407,14 +406,14 @@ impl<W: Write> serde::ser::SerializeTuple for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeTupleStruct for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeTupleStruct for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += value.serialize(&mut *self.parent)?;
         Ok(())
@@ -429,14 +428,14 @@ impl<W: Write> serde::ser::SerializeTupleStruct for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeTupleVariant for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeTupleVariant for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += value.serialize(&mut *self.parent)?;
         Ok(())
@@ -451,14 +450,14 @@ impl<W: Write> serde::ser::SerializeTupleVariant for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeMap for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeMap for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += key.serialize(&mut *self.parent)?;
         Ok(())
@@ -467,7 +466,7 @@ impl<W: Write> serde::ser::SerializeMap for SequenceSerializer<'_, W> {
     #[inline(always)]
     fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += value.serialize(&mut *self.parent)?;
         Ok(())
@@ -482,14 +481,14 @@ impl<W: Write> serde::ser::SerializeMap for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeStruct for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeStruct for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += key.cbor_serialize_to(&mut self.parent.writer)?;
         self.written += value.serialize(&mut *self.parent)?;
@@ -505,14 +504,14 @@ impl<W: Write> serde::ser::SerializeStruct for SequenceSerializer<'_, W> {
     }
 }
 
-impl<W: Write> serde::ser::SerializeStructVariant for SequenceSerializer<'_, W> {
+impl<W: Write> ::serde_core::ser::SerializeStructVariant for SequenceSerializer<'_, W> {
     type Ok = usize;
     type Error = SeaboredSerError;
 
     #[inline(always)]
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
     where
-        T: ?Sized + serde::Serialize,
+        T: ?Sized + ::serde_core::Serialize,
     {
         self.written += key.cbor_serialize_to(&mut self.parent.writer)?;
         self.written += value.serialize(&mut *self.parent)?;

@@ -1,4 +1,4 @@
-use facet_reflect::Peek;
+use facet_reflect::{HasFields, Peek};
 use parsio::Write;
 
 use crate::{
@@ -143,19 +143,17 @@ fn facet_ser<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<usize, Seab
         | facet::Def::Slice(facet::SliceDef { t, .. })
             if t.is_type::<u8>() =>
         {
-            return peek
-                .as_bytes()
-                .ok_or_else(|| {
-                    use facet::Facet as _;
-                    FacetError::from(facet_reflect::ReflectError::new(
-                        facet_reflect::ReflectErrorKind::WrongShape {
-                            expected: peek.shape(),
-                            actual: <[u8]>::SHAPE,
-                        },
-                        facet_path::Path::new(peek.shape()),
-                    ))
-                })?
-                .cbor_serialize_to(writer);
+            return if let Some(bytes) = peek.as_bytes() {
+                bytes.cbor_serialize_to(writer)
+            } else {
+                match peek.get::<[u8]>() {
+                    Ok(slice) => slice.cbor_serialize_to(writer),
+                    Err(_) => {
+                        let vec = peek.get::<Vec<u8>>().map_err(FacetError::from)?;
+                        vec.as_slice().cbor_serialize_to(writer)
+                    }
+                }
+            };
         }
         facet::Def::List(_) => {
             let list = peek.into_list().map_err(FacetError::from)?;
@@ -167,7 +165,6 @@ fn facet_ser<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<usize, Seab
             }
             return Ok(written);
         }
-
         facet::Def::Array(_) | facet::Def::Slice(_) => {
             let list = peek.into_list_like().map_err(FacetError::from)?;
             let len = list.len();
@@ -214,16 +211,13 @@ fn facet_ser<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<usize, Seab
         facet::Type::User(facet::UserType::Struct(struct_type)) => match struct_type.kind {
             facet::StructKind::Struct => {
                 let ps = peek.into_struct().map_err(FacetError::from)?;
-                let fc = ps.field_count();
 
-                let mut written = CborIntegerValue::from(fc)
+                let len = ps.fields_for_serialize().count();
+                let mut written = CborIntegerValue::from(len)
                     .serialize_complex_mt_preamble(MajorType::Map, writer)?;
 
-                for i in 0..fc {
-                    // key
-                    written += struct_type.fields[i].name.cbor_serialize_to(writer)?;
-                    let field = ps.field(i).map_err(FacetError::from)?;
-                    // value
+                for (field_item, field) in ps.fields_for_serialize() {
+                    written += field_item.effective_name().cbor_serialize_to(writer)?;
                     written += facet_ser(field, writer)?;
                 }
 
@@ -231,13 +225,13 @@ fn facet_ser<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<usize, Seab
             }
             facet::StructKind::TupleStruct | facet::StructKind::Tuple => {
                 let ps = peek.into_struct().map_err(FacetError::from)?;
-                let fc = ps.field_count();
 
-                let mut written = CborIntegerValue::from(fc)
+                let len = ps.fields_for_serialize().count();
+
+                let mut written = CborIntegerValue::from(len)
                     .serialize_complex_mt_preamble(MajorType::Array, writer)?;
 
-                for i in 0..fc {
-                    let field = ps.field(i).map_err(FacetError::from)?;
+                for (_, field) in ps.fields_for_serialize() {
                     written += facet_ser(field, writer)?;
                 }
 
@@ -261,16 +255,34 @@ fn facet_ser<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<usize, Seab
                 }
                 facet::StructKind::Struct => {
                     let len = variant.data.fields.len();
-
-                    written += CborIntegerValue::from(len)
-                        .serialize_complex_mt_preamble(MajorType::Map, writer)?;
+                    let mut effective_len = 0usize;
                     for i in 0..len {
-                        // key
-                        written += variant.data.fields[i].name.cbor_serialize_to(writer)?;
                         let field = pe
                             .field(i)
                             .map_err(FacetError::from)?
                             .ok_or_else(|| FacetError::MissingField(i))?;
+                        if unsafe { variant.data.fields[i].should_skip_serializing(field.data()) } {
+                            continue;
+                        }
+
+                        effective_len += 1;
+                    }
+
+                    written += CborIntegerValue::from(effective_len)
+                        .serialize_complex_mt_preamble(MajorType::Map, writer)?;
+
+                    for i in 0..len {
+                        let field = pe
+                            .field(i)
+                            .map_err(FacetError::from)?
+                            .ok_or_else(|| FacetError::MissingField(i))?;
+
+                        if unsafe { variant.data.fields[i].should_skip_serializing(field.data()) } {
+                            continue;
+                        }
+
+                        // key
+                        written += variant.data.fields[i].name.cbor_serialize_to(writer)?;
                         // value
                         written += facet_ser(field, writer)?;
                     }

@@ -32,14 +32,14 @@ pub(crate) struct DynamicTaggedValue<'a> {
 pub(crate) const DYN_TAGGED_TYP_NAME: &'static str = "seabored::adapters::DynamicTaggedValue";
 
 #[cfg(feature = "serde")]
-impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
+impl<'de> ::serde_core::Deserialize<'de> for DynamicTaggedValue<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
         struct DynamicTaggedValueVisitor;
 
-        impl<'de> ::serde::de::Visitor<'de> for DynamicTaggedValueVisitor {
+        impl<'de> ::serde_core::de::Visitor<'de> for DynamicTaggedValueVisitor {
             type Value = DynamicTaggedValue<'de>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -48,9 +48,9 @@ impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: ::serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
-                use ::serde::Deserialize as _;
+                use ::serde_core::Deserialize as _;
                 let tag = crate::adapters::serde::TAG
                     .get()
                     .expect("This should never happen");
@@ -67,16 +67,16 @@ impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
 }
 
 #[cfg(feature = "serde")]
-impl<'a> ::serde::Serialize for DynamicTaggedValue<'a> {
+impl<'a> ::serde_core::Serialize for DynamicTaggedValue<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(DYN_TAGGED_TYP_NAME, self)
     }
 }
 
-/// Internal only: Parses the tag value from the "seabored::serde::Tagged<'life, TAG, V>" form
+/// Internal only: Parses the tag value from the "seabored::serde_core::Tagged<'life, TAG, V>" form
 /// Returns `None` if non-matching
 ///
 /// ## Warning
@@ -84,7 +84,7 @@ impl<'a> ::serde::Serialize for DynamicTaggedValue<'a> {
 #[inline(always)]
 pub(crate) fn parse_tag_from_typ(typ: &str) -> Option<u64> {
     const TAGGED_VALUE_TYP_ROOT_NAME: &'static str = "seabored::adapters::Tagged";
-    // Split at the generics boundary to get (`seabored::serde::Tagged`, `'life, TAG, V>`)
+    // Split at the generics boundary to get (`seabored::adapters::Tagged`, `'life, TAG, V>`)
     let (tname, targs) = typ.split_once('<')?;
     if tname != TAGGED_VALUE_TYP_ROOT_NAME {
         return None;
@@ -101,31 +101,33 @@ pub(crate) fn parse_tag_from_typ(typ: &str) -> Option<u64> {
 }
 
 #[cfg(feature = "serde")]
-impl<'a, const TAG: u64, V: ::serde::Serialize + 'a> ::serde::Serialize for Tagged<'a, TAG, V> {
+impl<'a, const TAG: u64, V: ::serde_core::Serialize + 'a> ::serde_core::Serialize
+    for Tagged<'a, TAG, V>
+{
     #[inline(always)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(std::any::type_name::<Self>(), &self.inner)
     }
 }
 
 #[cfg(feature = "serde")]
-impl<'a, 'de: 'a, const TAG: u64, V: ::serde::Deserialize<'de> + 'a> ::serde::Deserialize<'de>
-    for Tagged<'a, TAG, V>
+impl<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de> + 'a>
+    ::serde_core::Deserialize<'de> for Tagged<'a, TAG, V>
 {
     #[inline(always)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
-        struct TaggedValueVisitor<'a, 'de: 'a, const TAG: u64, V: ::serde::Deserialize<'de>>(
+        struct TaggedValueVisitor<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de>>(
             std::marker::PhantomData<(&'a V, &'de ())>,
         );
 
-        impl<'a, 'de: 'a, const TAG: u64, V: ::serde::Deserialize<'de>> ::serde::de::Visitor<'de>
-            for TaggedValueVisitor<'a, 'de, TAG, V>
+        impl<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de>>
+            ::serde_core::de::Visitor<'de> for TaggedValueVisitor<'a, 'de, TAG, V>
         {
             type Value = Tagged<'a, TAG, V>;
 
@@ -135,7 +137,7 @@ impl<'a, 'de: 'a, const TAG: u64, V: ::serde::Deserialize<'de> + 'a> ::serde::De
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: ::serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
                 let inner = V::deserialize(deserializer)?;
                 Ok(inner.into())
@@ -198,23 +200,23 @@ impl SimpleValue {
 }
 
 #[cfg(feature = "serde")]
-impl ::serde::Serialize for SimpleValue {
+impl ::serde_core::Serialize for SimpleValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(Self::TYP_NAME, self)
     }
 }
 
 #[cfg(feature = "serde")]
-impl<'de> ::serde::Deserialize<'de> for SimpleValue {
+impl<'de> ::serde_core::Deserialize<'de> for SimpleValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
         struct SimpleValueVisitor;
-        impl<'de> ::serde::de::Visitor<'de> for SimpleValueVisitor {
+        impl<'de> ::serde_core::de::Visitor<'de> for SimpleValueVisitor {
             type Value = SimpleValue;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -223,9 +225,9 @@ impl<'de> ::serde::Deserialize<'de> for SimpleValue {
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: ::serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
-                use ::serde::Deserialize as _;
+                use ::serde_core::Deserialize as _;
                 Ok(SimpleValue(u8::deserialize(deserializer)?))
             }
         }

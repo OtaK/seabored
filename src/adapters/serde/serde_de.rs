@@ -1,5 +1,3 @@
-use serde::Deserialize;
-
 use crate::{
     adapters::{DYN_TAGGED_TYP_NAME, SimpleValue, parse_tag_from_typ, serde::Deserializer},
     de::CborDeserialize,
@@ -11,19 +9,19 @@ use crate::{
 
 use parsio::Read;
 
-impl serde::de::Error for SeaboredDeError<'_> {
+impl ::serde_core::de::Error for SeaboredDeError<'_> {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         Self::Serde(msg.to_string())
     }
 }
 
-impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
+impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'de, R> {
     type Error = SeaboredDeError<'de>;
 
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         match ib.mt() {
@@ -48,7 +46,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_bool(bool::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -56,7 +54,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_i8(i8::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -64,7 +62,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_i16(i16::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -72,7 +70,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_i32(i32::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -80,7 +78,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_i64(i64::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -88,7 +86,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_i128(i128::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -96,7 +94,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_u8(u8::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -104,7 +102,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_u16(u16::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -112,7 +110,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_u32(u32::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -120,7 +118,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_u64(u64::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -128,7 +126,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_u128(u128::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -136,7 +134,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_f32(f32::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -144,7 +142,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         visitor.visit_f64(f64::cbor_deserialize_from(&mut self.reader)?)
     }
@@ -152,7 +150,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         match std::borrow::Cow::<str>::cbor_deserialize_from(&mut self.reader)? {
             std::borrow::Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
@@ -163,7 +161,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_str(visitor)
     }
@@ -171,7 +169,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         match std::borrow::Cow::<[u8]>::cbor_deserialize_from(&mut self.reader)? {
             std::borrow::Cow::Borrowed(buf_ref) => visitor.visit_borrowed_bytes(buf_ref),
@@ -182,7 +180,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_bytes(visitor)
     }
@@ -190,7 +188,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_str(visitor)
     }
@@ -198,7 +196,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         if ib.0 != ib::consts::IB_NULL {
@@ -212,7 +210,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         if ib.0 != ib::consts::IB_UNDEFINED {
@@ -234,7 +232,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_unit(visitor)
     }
@@ -246,7 +244,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         // Dyn taagged value accessor (eg: Value::Tagged contained in a struct)
         if name == DYN_TAGGED_TYP_NAME {
@@ -288,7 +286,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -313,7 +311,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -351,7 +349,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_tuple(len, visitor)
     }
@@ -359,7 +357,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -388,7 +386,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_map(visitor)
     }
@@ -401,7 +399,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
         if ib.0 == ib::consts::IB_SMALL_MAP | 1 {
@@ -414,7 +412,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         self.deserialize_str(visitor)
     }
@@ -422,8 +420,9 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     #[inline(always)]
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
+        use ::serde_core::Deserialize as _;
         let _ = crate::Value::deserialize(self)?;
         visitor.visit_unit()
     }
@@ -434,7 +433,7 @@ impl<'de, R: Read<'de>> serde::Deserializer<'de> for &mut Deserializer<'de, R> {
     }
 }
 
-impl<'de, R: Read<'de>> serde::de::EnumAccess<'de> for &mut Deserializer<'de, R> {
+impl<'de, R: Read<'de>> ::serde_core::de::EnumAccess<'de> for &mut Deserializer<'de, R> {
     type Error = SeaboredDeError<'de>;
 
     type Variant = Self;
@@ -442,14 +441,14 @@ impl<'de, R: Read<'de>> serde::de::EnumAccess<'de> for &mut Deserializer<'de, R>
     #[inline(always)]
     fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
     where
-        V: serde::de::DeserializeSeed<'de>,
+        V: ::serde_core::de::DeserializeSeed<'de>,
     {
         let variant = seed.deserialize(&mut *self)?;
         Ok((variant, self))
     }
 }
 
-impl<'de, R: Read<'de>> serde::de::VariantAccess<'de> for &mut Deserializer<'de, R> {
+impl<'de, R: Read<'de>> ::serde_core::de::VariantAccess<'de> for &mut Deserializer<'de, R> {
     type Error = SeaboredDeError<'de>;
 
     #[inline(always)]
@@ -460,7 +459,7 @@ impl<'de, R: Read<'de>> serde::de::VariantAccess<'de> for &mut Deserializer<'de,
     #[inline(always)]
     fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
     where
-        T: serde::de::DeserializeSeed<'de>,
+        T: ::serde_core::de::DeserializeSeed<'de>,
     {
         seed.deserialize(&mut *self)
     }
@@ -468,9 +467,9 @@ impl<'de, R: Read<'de>> serde::de::VariantAccess<'de> for &mut Deserializer<'de,
     #[inline(always)]
     fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
-        use serde::de::Deserializer as _;
+        use ::serde_core::de::Deserializer as _;
         self.deserialize_tuple(len, visitor)
     }
 
@@ -481,9 +480,9 @@ impl<'de, R: Read<'de>> serde::de::VariantAccess<'de> for &mut Deserializer<'de,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
-        use serde::de::Deserializer as _;
+        use ::serde_core::de::Deserializer as _;
         self.deserialize_map(visitor)
     }
 }
@@ -492,7 +491,7 @@ pub(crate) struct DynamicTaggedValueAccessor<'a, 'de, R: Read<'de>> {
     parent: &'a mut Deserializer<'de, R>,
 }
 
-impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de>
+impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
     for &mut DynamicTaggedValueAccessor<'a, 'de, R>
 {
     type Error = SeaboredDeError<'de>;
@@ -500,7 +499,7 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de>
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         // Consume tag and check it
         let ib = InitialByte::cbor_deserialize_from(&mut self.parent.reader)?;
@@ -520,7 +519,7 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de>
         visitor.visit_newtype_struct(&mut *self.parent)
     }
 
-    serde::forward_to_deserialize_any! {
+    ::serde_core::forward_to_deserialize_any! {
         i8 i16 i32 i64 i128
         u8 u16 u32 u64 u128
         bool f32 f64
@@ -537,13 +536,15 @@ struct SimpleValueAccessor<'a, 'de, R: Read<'de>> {
     parent: &'a mut Deserializer<'de, R>,
 }
 
-impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de> for &mut SimpleValueAccessor<'a, 'de, R> {
+impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
+    for &mut SimpleValueAccessor<'a, 'de, R>
+{
     type Error = SeaboredDeError<'de>;
 
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::Visitor<'de>,
+        V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.parent.reader)?;
         let mt = ib.mt();
@@ -567,7 +568,7 @@ impl<'a, 'de, R: Read<'de>> serde::Deserializer<'de> for &mut SimpleValueAccesso
         visitor.visit_u8(u8_value)
     }
 
-    serde::forward_to_deserialize_any! {
+    ::serde_core::forward_to_deserialize_any! {
         i8 i16 i32 i64 i128
         u8 u16 u32 u64 u128
         bool f32 f64
@@ -587,7 +588,7 @@ struct SeqAccessor<'a, 'de, R: Read<'de>> {
 
 impl<'a, 'de, R: Read<'de>> SeqAccessor<'a, 'de, R> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn deser_from_seed<S: serde::de::DeserializeSeed<'de>>(
+    fn deser_from_seed<S: ::serde_core::de::DeserializeSeed<'de>>(
         &mut self,
         seed: S,
     ) -> Result<Option<S::Value>, SeaboredDeError<'de>> {
@@ -612,13 +613,13 @@ impl<'a, 'de, R: Read<'de>> SeqAccessor<'a, 'de, R> {
     }
 }
 
-impl<'a, 'de, R: Read<'de>> serde::de::SeqAccess<'de> for SeqAccessor<'a, 'de, R> {
+impl<'a, 'de, R: Read<'de>> ::serde_core::de::SeqAccess<'de> for SeqAccessor<'a, 'de, R> {
     type Error = SeaboredDeError<'de>;
 
     #[inline(always)]
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
     where
-        T: serde::de::DeserializeSeed<'de>,
+        T: ::serde_core::de::DeserializeSeed<'de>,
     {
         self.deser_from_seed(seed)
     }
@@ -629,13 +630,13 @@ impl<'a, 'de, R: Read<'de>> serde::de::SeqAccess<'de> for SeqAccessor<'a, 'de, R
     }
 }
 
-impl<'a, 'de, R: Read<'de>> serde::de::MapAccess<'de> for SeqAccessor<'a, 'de, R> {
+impl<'a, 'de, R: Read<'de>> ::serde_core::de::MapAccess<'de> for SeqAccessor<'a, 'de, R> {
     type Error = SeaboredDeError<'de>;
 
     #[inline(always)]
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
     where
-        K: serde::de::DeserializeSeed<'de>,
+        K: ::serde_core::de::DeserializeSeed<'de>,
     {
         self.deser_from_seed(seed)
     }
@@ -643,7 +644,7 @@ impl<'a, 'de, R: Read<'de>> serde::de::MapAccess<'de> for SeqAccessor<'a, 'de, R
     #[inline(always)]
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
     where
-        V: serde::de::DeserializeSeed<'de>,
+        V: ::serde_core::de::DeserializeSeed<'de>,
     {
         seed.deserialize(&mut *self.parent)
     }

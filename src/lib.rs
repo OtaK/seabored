@@ -1,8 +1,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "facet")]
-compile_error!("The `facet` feature isn't ready for prime-time yet");
+// #[cfg(feature = "facet")]
+// compile_error!("The `facet` feature isn't ready for prime-time yet");
 
 use crate::mt::MajorType;
 
@@ -149,11 +149,11 @@ impl<'a> FromIterator<(Value<'a>, Value<'a>)> for Value<'a> {
 }
 
 #[cfg(feature = "serde")]
-impl ::serde::Serialize for Value<'_> {
+impl ::serde_core::Serialize for Value<'_> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         match self {
             Value::Integer(cbor_integer) => {
@@ -167,7 +167,7 @@ impl ::serde::Serialize for Value<'_> {
             Value::Bytes(cow) => serializer.serialize_bytes(cow),
             Value::String(cow) => serializer.serialize_str(cow),
             Value::Sequence(cbor_sequence) => {
-                use ::serde::ser::SerializeSeq;
+                use ::serde_core::ser::SerializeSeq;
 
                 let mut seq = serializer.serialize_seq(Some(cbor_sequence.len()))?;
                 for value in cbor_sequence.iter() {
@@ -176,7 +176,7 @@ impl ::serde::Serialize for Value<'_> {
                 seq.end()
             }
             Value::Map(cbor_sequence) => {
-                use ::serde::ser::SerializeMap as _;
+                use ::serde_core::ser::SerializeMap as _;
 
                 let mut seqmap = serializer.serialize_map(Some(cbor_sequence.len()))?;
                 for (k, v) in cbor_sequence.iter() {
@@ -204,16 +204,16 @@ impl ::serde::Serialize for Value<'_> {
 }
 
 #[cfg(feature = "serde")]
-impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
+impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: ::serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
         #[derive(Default)]
         struct ValueVisitor<'a>(std::marker::PhantomData<&'a ()>);
 
-        impl<'a, 'de: 'a> ::serde::de::Visitor<'de> for ValueVisitor<'a> {
+        impl<'a, 'de: 'a> ::serde_core::de::Visitor<'de> for ValueVisitor<'a> {
             type Value = Value<'de>;
 
             #[inline(always)]
@@ -224,7 +224,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Bool(v))
             }
@@ -232,7 +232,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Integer(v.into()))
             }
@@ -240,7 +240,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Integer(v.into()))
             }
@@ -248,7 +248,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_f32<E>(self, v: f32) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Float(v.into()))
             }
@@ -256,7 +256,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Float(v.into()))
             }
@@ -264,7 +264,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_char<E>(self, v: char) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 self.visit_str(v.encode_utf8(&mut [0u8; 4]))
             }
@@ -272,7 +272,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::String(std::borrow::Cow::Borrowed(v)))
             }
@@ -280,7 +280,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::String(std::borrow::Cow::Owned(v)))
             }
@@ -288,7 +288,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Bytes(std::borrow::Cow::Borrowed(v)))
             }
@@ -296,7 +296,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Bytes(v.into()))
             }
@@ -304,7 +304,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_none<E>(self) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Null)
             }
@@ -312,7 +312,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: ::serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
                 deserializer.deserialize_any(self)
             }
@@ -320,7 +320,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_unit<E>(self) -> Result<Self::Value, E>
             where
-                E: ::serde::de::Error,
+                E: ::serde_core::de::Error,
             {
                 Ok(Value::Undefined)
             }
@@ -328,9 +328,9 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: ::serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
-                use ::serde::Deserialize as _;
+                use ::serde_core::Deserialize as _;
                 let dtv = crate::adapters::DynamicTaggedValue::deserialize(deserializer)?;
                 Ok(Value::Tagged((dtv.tag, Box::new(dtv.value.into_owned()))))
             }
@@ -338,7 +338,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
             where
-                A: ::serde::de::SeqAccess<'de>,
+                A: ::serde_core::de::SeqAccess<'de>,
             {
                 let mut arr = Vec::with_capacity(seq.size_hint().unwrap_or(4).min(256));
 
@@ -352,7 +352,7 @@ impl<'a, 'de: 'a> ::serde::Deserialize<'de> for Value<'a> {
             #[inline(always)]
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
             where
-                A: ::serde::de::MapAccess<'de>,
+                A: ::serde_core::de::MapAccess<'de>,
             {
                 let mut vmap = Vec::with_capacity(map.size_hint().unwrap_or(4).min(256));
 

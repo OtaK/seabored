@@ -44,7 +44,7 @@ impl<W: Write> Serializer<W> {
 
 #[inline(always)]
 /// Read a serde-enabled data structure from a slice
-pub fn from_slice<'de, T: serde::Deserialize<'de>>(
+pub fn from_slice<'de, T: ::serde_core::Deserialize<'de>>(
     buf: &'de [u8],
 ) -> Result<T, crate::error::SeaboredDeError<'de>> {
     from_reader(buf)
@@ -53,17 +53,17 @@ pub fn from_slice<'de, T: serde::Deserialize<'de>>(
 #[inline(always)]
 /// Read a serde-enabled data structure from a type that implements our [`io::Read`] trait
 // You might want to use the [`io::StdReader`] adapter if you need that
-pub fn from_reader<'de, T: serde::Deserialize<'de>, R: Read<'de>>(
+pub fn from_reader<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
     reader: R,
 ) -> Result<T, crate::error::SeaboredDeError<'de>> {
     let mut deserializer = Deserializer::new(reader);
-    serde::Deserialize::deserialize(&mut deserializer)
+    ::serde_core::Deserialize::deserialize(&mut deserializer)
 }
 
 #[inline(always)]
 /// Serialize a data structure to a Writer that implements our [`io::Write`] trait
 /// You might want to use the [`io::StdWriter`] adapter if you need that
-pub fn to_writer<W: Write, T: serde::Serialize>(
+pub fn to_writer<W: Write, T: ::serde_core::Serialize>(
     writer: &mut W,
     value: &T,
 ) -> Result<usize, crate::error::SeaboredSerError> {
@@ -73,7 +73,9 @@ pub fn to_writer<W: Write, T: serde::Serialize>(
 
 #[inline(always)]
 /// Serialize a data structure to a Vec
-pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
+pub fn to_vec<T: ::serde_core::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
     let mut buf = vec![];
     let written = to_writer(&mut buf, value)?;
     debug_assert_eq!(written, buf.len());

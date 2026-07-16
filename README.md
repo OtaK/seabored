@@ -45,7 +45,7 @@ If you want examples, please head to the `benches` folder.
 - [ ] Add CBOR RFC compat feature flag, to reduce branches
 - [ ] Make a homebrew derive for people who don't care about serde/facet/etc
   - This would have more power as you'll be able to be more in control as to how stuff gets de/serialized (like tags, simple values, etc)
-- [x] Facet compat
+- [x] Facet compat (done-ish, some bugs to fixup)
 - [ ] Improve performance (yes, there's still some to get)
 - [ ] Docs improvements, examples, etc
 

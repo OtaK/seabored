@@ -47,6 +47,10 @@ fn facet_deser<'facet, R: Read<'facet>>(
         );
     }
 
+    if shape.has_default_attr() {
+        return Ok(partial.set_default().map_err(FacetError::from)?);
+    }
+
     if let Some(st) = shape.scalar_type() {
         return Ok(match st {
             facet::ScalarType::Unit => {
@@ -158,6 +162,7 @@ fn facet_deser<'facet, R: Read<'facet>>(
         }
         facet::Def::List(facet::ListDef { t, .. })
         | facet::Def::Slice(facet::SliceDef { t, .. })
+        | facet::Def::Array(facet::ArrayDef { t, .. })
             if t.is_type::<u8>() =>
         {
             return Ok(partial
