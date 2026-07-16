@@ -2,6 +2,8 @@ use crate::mt::MajorType;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SeaboredSerError {
+    #[error(transparent)]
+    Parsio(#[from] parsio::WriteError),
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("I/O Error: {0}")]
@@ -18,15 +20,10 @@ pub enum SeaboredSerError {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{inner:?} with external cause {external:?}")]
-pub struct WinnowError<'a> {
-    inner: winnow::error::ContextError<&'a [u8]>,
-    external: Option<&'a (dyn std::error::Error + 'static)>,
-}
-
-#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SeaboredDeError<'a> {
+pub enum SeaboredDeError {
+    #[error(transparent)]
+    Parsio(#[from] parsio::ReadError),
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("I/O Error: {0}")]
@@ -35,14 +32,6 @@ pub enum SeaboredDeError<'a> {
         "Allowed depth exceeded (billion laughs detected?), we are {depth} levels deep but only {limit} is allowed"
     )]
     AllowedDepthOverflow { depth: usize, limit: usize },
-    #[error("The parser needs more bytes: {0:?}")]
-    Incomplete(winnow::error::Needed),
-    #[error("Parsing error {0}")]
-    Parsing(WinnowError<'a>),
-    #[error("Recoverable error {0}")]
-    Recoverable(WinnowError<'a>),
-    #[error("Unrecoverable error {0}")]
-    Unrecoverable(WinnowError<'a>),
     #[error("Wrong MajorType encountered, got {actual}, expected one of {expected:?}")]
     IncorrectMajorType {
         actual: MajorType,
@@ -70,6 +59,8 @@ pub enum SeaboredDeError<'a> {
     UnsupportedSimpleValue(u8),
     #[error("Indefinite len value - not an error that is supposed to be user-visible")]
     IndefiniteLen,
+    #[error("A CBOR Sequence has the wrong number of elements, expected {expected}, but got {got}")]
+    WrongLen { expected: usize, got: usize },
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]
@@ -77,43 +68,16 @@ pub enum SeaboredDeError<'a> {
     Serde(String),
 }
 
-impl<'a> From<winnow::error::ContextError<&'a [u8]>> for SeaboredDeError<'a> {
-    fn from(value: winnow::error::ContextError<&'a [u8]>) -> Self {
-        Self::Parsing(WinnowError {
-            inner: value,
-            external: None,
-        })
-    }
-}
-
-impl<'a> From<winnow::error::ErrMode<winnow::error::ContextError<&'a [u8]>>>
-    for SeaboredDeError<'a>
-{
-    fn from(value: winnow::error::ErrMode<winnow::error::ContextError<&'a [u8]>>) -> Self {
-        match value {
-            winnow::error::ErrMode::Incomplete(needed) => Self::Incomplete(needed),
-            winnow::error::ErrMode::Backtrack(e) => Self::Recoverable(WinnowError {
-                inner: e,
-                external: None,
-            }),
-            winnow::error::ErrMode::Cut(e) => Self::Unrecoverable(WinnowError {
-                inner: e,
-                external: None,
-            }),
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum SeaboredError<'a> {
+pub enum SeaboredError {
     #[error(transparent)]
     Ser(#[from] SeaboredSerError),
     #[error(transparent)]
-    De(SeaboredDeError<'a>),
+    De(SeaboredDeError),
 }
 
-impl<'a> From<SeaboredDeError<'a>> for SeaboredError<'a> {
-    fn from(value: SeaboredDeError<'a>) -> Self {
+impl From<SeaboredDeError> for SeaboredError {
+    fn from(value: SeaboredDeError) -> Self {
         Self::De(value)
     }
 }

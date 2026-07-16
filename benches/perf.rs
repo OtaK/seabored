@@ -1,9 +1,6 @@
 use cbor4ii::core::{dec::Decode, enc::Encode};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use seabored::{
-    de::{CborDeserialize, parse_value},
-    ser::CborSerialize,
-};
+use seabored::{de::CborDeserialize, ser::CborSerialize};
 use std::hint::black_box;
 
 #[cfg(not(target_env = "msvc"))]
@@ -173,11 +170,13 @@ fn value_bench_with_group_and_sample_seabored(sample: &[u8], c: &mut Criterion, 
     group.throughput(Throughput::Bytes(sample.len() as u64));
 
     group.bench_function("value-de", |b| {
-        b.iter(|| black_box(parse_value(black_box(&mut &sample[..])).unwrap()));
+        b.iter(|| {
+            black_box(seabored::Value::cbor_deserialize_from(black_box(&mut &sample[..])).unwrap())
+        });
     });
 
     group.bench_function("value-ser", |b| {
-        let value = parse_value(&mut &sample[..]).unwrap();
+        let value = seabored::Value::cbor_deserialize_from(&mut &sample[..]).unwrap();
         let capacity = value.cbor_serialize().unwrap().len();
 
         b.iter_batched_ref(
@@ -185,24 +184,6 @@ fn value_bench_with_group_and_sample_seabored(sample: &[u8], c: &mut Criterion, 
             |buf| black_box(value.cbor_serialize_to(black_box(buf)).unwrap()),
             BatchSize::SmallInput,
         );
-    });
-
-    group.finish();
-}
-
-fn perf_value_winnow_homebrew(c: &mut Criterion) {
-    let sample = mimi_content_multipart_3::BYTES;
-    let mut group = c.benchmark_group("seabored/parser_impl");
-    group.throughput(Throughput::Bytes(sample.len() as u64));
-
-    group.bench_function("cbor_deserialize_from", |b| {
-        b.iter(|| {
-            black_box(seabored::Value::cbor_deserialize_from(black_box(&mut &sample[..])).unwrap())
-        });
-    });
-
-    group.bench_function("parse_value", |b| {
-        b.iter(|| black_box(parse_value(black_box(&mut &sample[..])).unwrap()));
     });
 
     group.finish();
@@ -321,6 +302,6 @@ fn perf_serde(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default();
-    targets = perf_value_winnow_homebrew, perf_value, perf_serde
+    targets = perf_value, perf_serde
 );
 criterion_main!(benches);

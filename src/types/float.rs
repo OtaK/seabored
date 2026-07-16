@@ -4,16 +4,13 @@ use crate::{
     de::CborDeserialize,
     error::{SeaboredDeError, SeaboredSerError},
     ib::{self, InitialByte},
-    io::{Read, Write},
+    io::ReadExt as _,
     ser::CborSerialize,
 };
 
+use parsio::{Read, Write};
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-// #[cfg_attr(
-//     feature = "serde",
-//     derive(serde::Serialize, serde::Deserialize),
-//     serde(transparent)
-// )]
 #[repr(transparent)]
 pub struct CborFloat(f64);
 
@@ -63,7 +60,7 @@ impl std::ops::DerefMut for CborFloat {
 
 impl CborFloat {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    pub fn try_cast_f32<'a>(&self) -> Result<f32, SeaboredDeError<'a>> {
+    pub fn try_cast_f32(&self) -> Result<f32, SeaboredDeError> {
         let float_f32 = self.0 as f32;
         if float_f32 as f64 == self.0 {
             Ok(float_f32)
@@ -73,7 +70,7 @@ impl CborFloat {
     }
 
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    pub fn try_cast_f16<'a>(&self) -> Result<f16, SeaboredDeError<'a>> {
+    pub fn try_cast_f16(&self) -> Result<f16, SeaboredDeError> {
         let float_f16 = f16::from_f64(self.0);
         if float_f16.to_f64() == self.0 {
             Ok(float_f16)
@@ -107,14 +104,14 @@ impl<'a> CborDeserialize<'a> for CborFloat {
     #[inline]
     fn cbor_deserialize_from<R: Read<'a>>(
         reader: &mut R,
-    ) -> Result<Self, crate::error::SeaboredDeError<'a>> {
+    ) -> Result<Self, crate::error::SeaboredDeError> {
         Ok(Self(f64::cbor_deserialize_from(reader)?))
     }
 }
 
 impl<'a> CborDeserialize<'a> for f16 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError<'a>>
+    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
@@ -132,7 +129,7 @@ impl<'a> CborDeserialize<'a> for f16 {
 
 impl<'a> CborDeserialize<'a> for f32 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError<'a>>
+    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
@@ -151,7 +148,7 @@ impl<'a> CborDeserialize<'a> for f32 {
 
 impl<'a> CborDeserialize<'a> for f64 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError<'a>>
+    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
@@ -174,7 +171,7 @@ impl CborSerialize for f16 {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         let mut buf = [ib::consts::IB_FLOAT_16, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }
 
@@ -195,7 +192,7 @@ impl CborSerialize for f32 {
 
         let mut buf = [ib::consts::IB_FLOAT_32, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }
 
@@ -213,6 +210,6 @@ impl CborSerialize for f64 {
 
         let mut buf = [ib::consts::IB_FLOAT_64, 0, 0, 0, 0, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
-        writer.write(&buf)
+        writer.write(&buf).map_err(Into::into)
     }
 }

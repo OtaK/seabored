@@ -5,7 +5,7 @@
 
 ## Description
 
-Implementation of the CBOR data format. Compatible with Serde (optional), Facet incoming.
+Implementation of the CBOR data format. Compatible with Serde (optional).
 
 Compatible with WASM.
 
@@ -28,6 +28,7 @@ If you want examples, please head to the `benches` folder.
 - As always, Serde de/ser is quirky as hell with CBOR since the Rust types do not map very well to CBOR primitives.
   - `Option::None` is serialized as CBOR Null SimpleValue
   - `()` unit type is serialized as CBOR Undefined SimpleValue
+  - Enums are serialized as a 1-entry map of { variant_name => contents }
   - TODO: list more quirks?
 - The library *might* serialize things a bit differently than what it deserialized. The reason being is that the library prefers the preferred-plus serialization scheme, and things like indefinite length sequences are forbidden in this scheme. We still tolerate them but *might* avoid reserializing them.
 - There's some `unsafe` here and there to juice out more performance where applicable. If you don't like it, then use something else. Fuzzing is in place to minimize risk here.
@@ -36,16 +37,15 @@ If you want examples, please head to the `benches` folder.
 
 - `inline-nontrivial`: Enabled by default, adds the `#[inline]` attributes to most non-trivial functions. This is for performance at the cost of codesize (even though those reports are usually greatly exaggerated). Disable it (by using `default-features = false`) if you absolutely need smol code size.
 - `serde`: Enables Serde compatibility
-- `facet`: Enables Facet compatibility (does nothing for now: TODO)
 - `hazmat`: Enables dangerous features (`RawValue`)
 
 ## Roadmap
 
 - [ ] Billion Laughs protection (recursion depth tracking)
 - [ ] Add CBOR RFC compat feature flag, to reduce branches
-- [ ] Make a homebrew derive for people who don't care about serde/facet/etc
-  - This would have more power as you'll be able to be more in control as to how stuff gets de/serialized (like tags, simple values, etc)
-- [ ] Facet compat
+- [ ] Make a homebrew derive for people who don't care about serde/etc
+  - This would have more power as you'll be able to be more in control as to how stuff gets de/serialized (like tags, simple values, etc, but also overriding map keys or forcing deterministic profile)
+- [x] ~~Facet compat~~ Not happening.
 - [ ] Improve performance (yes, there's still some to get)
 - [ ] Docs improvements, examples, etc
 
