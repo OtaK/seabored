@@ -3,7 +3,6 @@
 ## Table of Contents
 
 - [Benchmark Results](#benchmark-results)
-    - [seabored](#seabored)
     - [mimi_content_multipart_3](#mimi_content_multipart_3)
     - [log](#log)
     - [mesh](#mesh)
@@ -13,18 +12,6 @@
 ## Benchmark Results
 
 Ran on `Linux 7.0.12-x86_64 #1 SMP PREEMPT_DYNAMIC x86_64 AMD Ryzen 9 5950X 16-Core Processor AuthenticAMD GNU/Linux`
-
-### seabored
-
-This compares the two internal parser implementations
-
-`cbor_deserialize_from` is an implementation of our internal I/O traits
-`parse_value` uses `winnow`. This implementation will be eventually removed once we catch up performance-wise.
-
-|                             | `parser_impl`              |
-|:----------------------------|:-------------------------- |
-| **`cbor_deserialize_from`** | `933.73 ns` (✅ **1.00x**)  |
-| **`parse_value`**           | `814.61 ns` (✅ **1.00x**)  |
 
 ### mimi_content_multipart_3
 

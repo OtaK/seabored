@@ -9,14 +9,13 @@ readme = "README.md"
 documentation = "https://docs.rs/seabored"
 repository = "https://github.com/OtaK/seabored"
 license = "MIT OR Apache-2.0"
-keywords = ["cbor", "serde", "facet", "rfc8949", "preferred-plus"]
+keywords = ["cbor", "serde", "rfc8949", "preferred-plus"]
 categories = ["parser-implementations", "encoding", "wasm"]
 authors = ["Mathieu Amiot <amiot.mathieu@gmail.com>"]
 
 [package.metadata.docs.rs]
 features = [
     "serde",
-    "facet",
     "hazmat"
 ]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
@@ -25,8 +24,7 @@ rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 default = ["inline-nontrivial"]
 # Enables inlining on non-trivial functions to increase performance at the cost of code size
 inline-nontrivial = []
-serde = ["dep:serde"]
-facet = ["dep:facet", "dep:facet-core", "dep:facet-reflect"]
+serde = ["dep:serde_core"]
 derive = []
 # Enable dangerous features
 hazmat = []
@@ -34,16 +32,9 @@ hazmat = []
 [dependencies]
 thiserror = "2"
 half = "2"
+parsio = { version = "0.0.2", features = ["std"] }
 simdutf8 = "0.1"
-serde = { version = "1", optional = true }
-facet = { version = "0.46", optional = true }
-facet-core = { version = "0.46", optional = true }
-facet-reflect = { version = "0.46", optional = true }
-
-[dependencies.winnow]
-version = "1"
-default-features = false
-features = ["binary", "simd"]
+serde_core = { version = "1", optional = true }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
@@ -52,6 +43,7 @@ pretty_assertions = "1"
 seabored = { path = ".", features = ["inline-nontrivial", "serde"] }
 color-eyre = "0.6"
 divan = "0.1"
+serde = { version = "1", features = ["derive"] }
 serde_tuple = "1"
 serde_bytes = "0.11"
 serde_repr = "0.1"
@@ -60,7 +52,7 @@ cbor4ii = { version = "1", features = ["half-f16", "use_std", "serde1"] }
 ciborium = "0.2"
 
 [target.'cfg(not(all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown")))'.dev-dependencies]
-gungraun = "0.19.3"
+gungraun = "0.19.4"
 criterion = "0.8"
 
 [target.'cfg(not(any(target_env = "msvc", all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown"))))'.dev-dependencies]
@@ -82,6 +74,6 @@ harness = false
 [profile.bench]
 opt-level = 3
 debug = true
-lto = 'fat'
+lto = "thin"
 debug-assertions = false
 codegen-units = 1

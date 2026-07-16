@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use crate::{error::SeaboredSerError, io::Write, ser::CborSerialize};
+use crate::{error::SeaboredSerError, ser::CborSerialize};
+use parsio::Write;
 
 /// A raw, pre-encoded CBOR value backed by a byte buffer
 ///
@@ -31,7 +32,7 @@ impl<'a> RawValue<'a> {
     /// Serializes `value` into CBOR bytes and stores them inside a `RawValue`
     #[cfg(feature = "serde")]
     #[inline]
-    pub fn from_serialize<T: ::serde::Serialize>(value: &T) -> Result<Self, SeaboredSerError> {
+    pub fn from_serialize<T: ::serde_core::Serialize>(value: &T) -> Result<Self, SeaboredSerError> {
         crate::serde::to_vec(value).map(Self::from_bytes_unchecked)
     }
 
@@ -50,9 +51,9 @@ impl<'a> RawValue<'a> {
     /// Parses the raw CBOR bytes into a value of type `T`
     #[cfg(feature = "serde")]
     #[inline]
-    pub fn parse<'de, T: ::serde::Deserialize<'a>>(
+    pub fn parse<'de, T: ::serde_core::Deserialize<'a>>(
         &'de self,
-    ) -> Result<T, crate::error::SeaboredDeError<'de>>
+    ) -> Result<T, crate::error::SeaboredDeError>
     where
         'de: 'a,
     {
@@ -64,7 +65,7 @@ impl CborSerialize for RawValue<'_> {
     /// Writes the raw CBOR bytes verbatim into `writer`
     #[inline(always)]
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
-        writer.write(&self.0)
+        writer.write(&self.0).map_err(Into::into)
     }
 }
 
@@ -81,11 +82,11 @@ impl AsRef<[u8]> for RawValue<'_> {
 /// writes the bytes directly without any additional framing. Other serializers
 /// will see this as an opaque newtype wrapping `[u8]` and serialize accordingly
 #[cfg(feature = "serde")]
-impl ::serde::Serialize for RawValue<'_> {
+impl ::serde_core::Serialize for RawValue<'_> {
     #[inline(always)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: ::serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(Self::TYP_NAME, self)
     }

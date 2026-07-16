@@ -17,19 +17,20 @@ use crate::{de::CborDeserialize, ib::InitialByte, ser::CborSerialize};
 
 impl CborSerialize for bool {
     #[inline(always)]
-    fn cbor_serialize_to<W: crate::io::Write>(
+    fn cbor_serialize_to<W: parsio::Write>(
         &self,
         buf: &mut W,
     ) -> Result<usize, crate::error::SeaboredSerError> {
         buf.write(&[crate::ib::consts::IB_FALSE | *self as u8])
+            .map_err(Into::into)
     }
 }
 
 impl<'de> CborDeserialize<'de> for bool {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: crate::io::Read<'de>>(
+    fn cbor_deserialize_from<R: parsio::Read<'de>>(
         reader: &mut R,
-    ) -> Result<Self, crate::error::SeaboredDeError<'de>>
+    ) -> Result<Self, crate::error::SeaboredDeError>
     where
         Self: Sized + 'de,
     {
@@ -49,7 +50,7 @@ impl<'de> CborDeserialize<'de> for bool {
 
 impl CborSerialize for &str {
     #[inline(always)]
-    fn cbor_serialize_to<W: crate::io::Write>(
+    fn cbor_serialize_to<W: parsio::Write>(
         &self,
         writer: &mut W,
     ) -> Result<usize, crate::error::SeaboredSerError> {
@@ -63,9 +64,9 @@ impl CborSerialize for &str {
 
 impl<'de> CborDeserialize<'de> for Cow<'de, str> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: crate::io::Read<'de>>(
+    fn cbor_deserialize_from<R: parsio::Read<'de>>(
         reader: &mut R,
-    ) -> Result<Self, crate::error::SeaboredDeError<'de>> {
+    ) -> Result<Self, crate::error::SeaboredDeError> {
         let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != crate::mt::MajorType::String {
@@ -91,7 +92,7 @@ impl<'de> CborDeserialize<'de> for Cow<'de, str> {
 
 impl CborSerialize for &[u8] {
     #[inline(always)]
-    fn cbor_serialize_to<W: crate::io::Write>(
+    fn cbor_serialize_to<W: parsio::Write>(
         &self,
         writer: &mut W,
     ) -> Result<usize, crate::error::SeaboredSerError> {
@@ -101,9 +102,9 @@ impl CborSerialize for &[u8] {
 
 impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: crate::io::Read<'de>>(
+    fn cbor_deserialize_from<R: parsio::Read<'de>>(
         reader: &mut R,
-    ) -> Result<Self, crate::error::SeaboredDeError<'de>> {
+    ) -> Result<Self, crate::error::SeaboredDeError> {
         let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
         if mt != crate::mt::MajorType::Bytes {
@@ -116,6 +117,6 @@ impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
         reader.advance(1)?;
 
         let len = ai.find_subsequent_len(reader)?;
-        reader.read_slice(len.try_into()?)
+        reader.read_slice(len.try_into()?).map_err(Into::into)
     }
 }

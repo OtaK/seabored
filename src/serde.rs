@@ -1,19 +1,92 @@
-mod serde_ser;
-use serde::Deserialize;
-pub use serde_ser::Serializer;
+use crate::types::CborIntegerValue;
+use parsio::{Read, Write};
+
+// Lil hack to pass over the serde fence
+thread_local! {
+    pub(crate) static TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
 
 mod serde_de;
-pub use serde_de::Deserializer;
+mod serde_ser;
 
-use crate::{
-    io::{Read, Write},
-    types::CborIntegerValue,
-};
+pub struct Deserializer<'de, R: Read<'de>> {
+    reader: R,
+    _marker: std::marker::PhantomData<&'de ()>,
+}
+
+impl<'de, R: Read<'de>> Deserializer<'de, R> {
+    #[inline]
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            _marker: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+}
+
+pub struct Serializer<W: Write> {
+    pub(crate) writer: W,
+}
+
+impl<W: Write> Serializer<W> {
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+}
+
+#[inline(always)]
+/// Read a serde-enabled data structure from a slice
+pub fn from_slice<'de, T: ::serde_core::Deserialize<'de>>(
+    buf: &'de [u8],
+) -> Result<T, crate::error::SeaboredDeError> {
+    from_reader(buf)
+}
+
+#[inline(always)]
+/// Read a serde-enabled data structure from a type that implements our [`io::Read`] trait
+// You might want to use the [`io::StdReader`] adapter if you need that
+pub fn from_reader<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+) -> Result<T, crate::error::SeaboredDeError> {
+    let mut deserializer = Deserializer::new(reader);
+    ::serde_core::Deserialize::deserialize(&mut deserializer)
+}
+
+#[inline(always)]
+/// Serialize a data structure to a Writer that implements our [`io::Write`] trait
+/// You might want to use the [`io::StdWriter`] adapter if you need that
+pub fn to_writer<W: Write, T: ::serde_core::Serialize>(
+    writer: &mut W,
+    value: &T,
+) -> Result<usize, crate::error::SeaboredSerError> {
+    let mut serializer = Serializer::new(writer);
+    value.serialize(&mut serializer)
+}
+
+#[inline(always)]
+/// Serialize a data structure to a Vec
+pub fn to_vec<T: ::serde_core::Serialize>(
+    value: &T,
+) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
+    let mut buf = vec![];
+    let written = to_writer(&mut buf, value)?;
+    debug_assert_eq!(written, buf.len());
+    Ok(buf)
+}
 
 /// Wrapper for Tagged CBOR values
 /// This makes sure the tag is used when deserializing and emitted when serializing
 ///
-/// ## Example
+/// ## Example (serde)
 /// ```rust,ignore
 /// const MY_TAG: u64 = 123456789;
 ///
@@ -33,16 +106,16 @@ pub(crate) struct DynamicTaggedValue<'a> {
     pub(crate) value: std::borrow::Cow<'a, crate::Value<'a>>,
 }
 
-pub(crate) const DYN_TAGGED_TYP_NAME: &'static str = "seabored::serde::DynamicTaggedValue";
+pub(crate) const DYN_TAGGED_TYP_NAME: &str = "seabored::serde::DynamicTaggedValue";
 
-impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
+impl<'de> ::serde_core::Deserialize<'de> for DynamicTaggedValue<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
         struct DynamicTaggedValueVisitor;
 
-        impl<'de> ::serde::de::Visitor<'de> for DynamicTaggedValueVisitor {
+        impl<'de> ::serde_core::de::Visitor<'de> for DynamicTaggedValueVisitor {
             type Value = DynamicTaggedValue<'de>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -51,9 +124,10 @@ impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
-                let tag = serde_de::TAG.get().expect("This should never happen");
+                use ::serde_core::Deserialize as _;
+                let tag = crate::serde::TAG.get().expect("This should never happen");
                 let value = crate::Value::deserialize(deserializer)?;
                 Ok(DynamicTaggedValue {
                     tag: tag.into(),
@@ -66,10 +140,10 @@ impl<'de> ::serde::Deserialize<'de> for DynamicTaggedValue<'de> {
     }
 }
 
-impl<'a> ::serde::Serialize for DynamicTaggedValue<'a> {
+impl<'a> ::serde_core::Serialize for DynamicTaggedValue<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(DYN_TAGGED_TYP_NAME, self)
     }
@@ -82,7 +156,7 @@ impl<'a> ::serde::Serialize for DynamicTaggedValue<'a> {
 /// Can panic if fed anything else than our own internals, hence the visibility of this fn
 #[inline(always)]
 pub(crate) fn parse_tag_from_typ(typ: &str) -> Option<u64> {
-    const TAGGED_VALUE_TYP_ROOT_NAME: &'static str = "seabored::serde::Tagged";
+    const TAGGED_VALUE_TYP_ROOT_NAME: &str = "seabored::serde::Tagged";
     // Split at the generics boundary to get (`seabored::serde::Tagged`, `'life, TAG, V>`)
     let (tname, targs) = typ.split_once('<')?;
     if tname != TAGGED_VALUE_TYP_ROOT_NAME {
@@ -99,30 +173,32 @@ pub(crate) fn parse_tag_from_typ(typ: &str) -> Option<u64> {
     })
 }
 
-impl<'a, const TAG: u64, V: serde::Serialize + 'a> serde::Serialize for Tagged<'a, TAG, V> {
+impl<'a, const TAG: u64, V: ::serde_core::Serialize + 'a> ::serde_core::Serialize
+    for Tagged<'a, TAG, V>
+{
     #[inline(always)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(std::any::type_name::<Self>(), &self.inner)
     }
 }
 
-impl<'a, 'de: 'a, const TAG: u64, V: serde::Deserialize<'de> + 'a> serde::Deserialize<'de>
-    for Tagged<'a, TAG, V>
+impl<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de> + 'a>
+    ::serde_core::Deserialize<'de> for Tagged<'a, TAG, V>
 {
     #[inline(always)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
-        struct TaggedValueVisitor<'a, 'de: 'a, const TAG: u64, V: serde::Deserialize<'de>>(
+        struct TaggedValueVisitor<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de>>(
             std::marker::PhantomData<(&'a V, &'de ())>,
         );
 
-        impl<'a, 'de: 'a, const TAG: u64, V: serde::Deserialize<'de>> serde::de::Visitor<'de>
-            for TaggedValueVisitor<'a, 'de, TAG, V>
+        impl<'a, 'de: 'a, const TAG: u64, V: ::serde_core::Deserialize<'de>>
+            ::serde_core::de::Visitor<'de> for TaggedValueVisitor<'a, 'de, TAG, V>
         {
             type Value = Tagged<'a, TAG, V>;
 
@@ -132,7 +208,7 @@ impl<'a, 'de: 'a, const TAG: u64, V: serde::Deserialize<'de> + 'a> serde::Deseri
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
                 let inner = V::deserialize(deserializer)?;
                 Ok(inner.into())
@@ -194,22 +270,22 @@ impl SimpleValue {
     pub(crate) const TYP_NAME: &'static str = "seabored::serde::SimpleValue";
 }
 
-impl serde::Serialize for SimpleValue {
+impl ::serde_core::Serialize for SimpleValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: ::serde_core::Serializer,
     {
         serializer.serialize_newtype_struct(Self::TYP_NAME, self)
     }
 }
 
-impl<'de> serde::Deserialize<'de> for SimpleValue {
+impl<'de> ::serde_core::Deserialize<'de> for SimpleValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: ::serde_core::Deserializer<'de>,
     {
         struct SimpleValueVisitor;
-        impl<'de> serde::de::Visitor<'de> for SimpleValueVisitor {
+        impl<'de> ::serde_core::de::Visitor<'de> for SimpleValueVisitor {
             type Value = SimpleValue;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -218,52 +294,15 @@ impl<'de> serde::Deserialize<'de> for SimpleValue {
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
-                D: serde::Deserializer<'de>,
+                D: ::serde_core::Deserializer<'de>,
             {
+                use ::serde_core::Deserialize as _;
                 Ok(SimpleValue(u8::deserialize(deserializer)?))
             }
         }
 
         deserializer.deserialize_newtype_struct(Self::TYP_NAME, SimpleValueVisitor)
     }
-}
-
-#[inline(always)]
-/// Read a serde-enabled data structure from a slice
-pub fn from_slice<'de, T: serde::Deserialize<'de>>(
-    buf: &'de [u8],
-) -> Result<T, crate::error::SeaboredDeError<'de>> {
-    from_reader(buf)
-}
-
-#[inline(always)]
-/// Read a serde-enabled data structure from a type that implements our [`io::Read`] trait
-// You might want to use the [`io::StdReader`] adapter if you need that
-pub fn from_reader<'de, T: serde::Deserialize<'de>, R: Read<'de>>(
-    reader: R,
-) -> Result<T, crate::error::SeaboredDeError<'de>> {
-    let mut deserializer = serde_de::Deserializer::new(reader);
-    serde::Deserialize::deserialize(&mut deserializer)
-}
-
-#[inline(always)]
-/// Serialize a data structure to a Writer that implements our [`io::Write`] trait
-/// You might want to use the [`io::StdWriter`] adapter if you need that
-pub fn to_writer<W: Write, T: serde::Serialize>(
-    writer: &mut W,
-    value: &T,
-) -> Result<usize, crate::error::SeaboredSerError> {
-    let mut serializer = serde_ser::Serializer { writer };
-    value.serialize(&mut serializer)
-}
-
-#[inline(always)]
-/// Serialize a data structure to a Vec
-pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
-    let mut buf = vec![];
-    let written = to_writer(&mut buf, value)?;
-    debug_assert_eq!(written, buf.len());
-    Ok(buf)
 }
 
 #[cfg(test)]
