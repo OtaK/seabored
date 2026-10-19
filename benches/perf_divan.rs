@@ -15,14 +15,14 @@ fn find_sample(sample_id: &str) -> &'static [u8] {
 #[divan::bench_group]
 mod value {
     use divan::{black_box, counter::BytesCount};
-    use seabored::{de::CborDeserialize, ser::CborSerialize as _};
+    use seabored::{de::from_bytes, ser::CborSerialize as _};
 
     use crate::find_sample;
 
     #[divan::bench(args = super::datasets::sample_ids())]
     fn value_ser(bencher: divan::Bencher, sample_id: &str) {
         let sample = find_sample(sample_id);
-        let value = seabored::Value::cbor_deserialize_from(&mut &sample[..]).unwrap();
+        let value = from_bytes::<seabored::Value>(sample).unwrap();
         let capacity = value.cbor_serialize().unwrap().len();
 
         bencher
@@ -39,9 +39,7 @@ mod value {
         bencher
             .counter(BytesCount::of_slice(sample))
             .bench_local(|| {
-                black_box(
-                    seabored::Value::cbor_deserialize_from(black_box(&mut &sample[..])).unwrap(),
-                );
+                black_box(from_bytes::<seabored::Value>(black_box(sample)).unwrap());
             });
     }
 }

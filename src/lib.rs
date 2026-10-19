@@ -22,13 +22,18 @@ pub mod reexports {
     pub use half;
 }
 
+/// A decoded CBOR item. Strings and bytes borrow when the input can lend, so `Value` is never
+/// `DeserializeOwned` (`'de: 'a` in the serde impl); [`OwnedValue`] is for readers that cannot lend.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Value<'a> {
     Integer(types::CborInteger),
     Float(types::CborFloat),
     Bytes(std::borrow::Cow<'a, [u8]>),
     String(std::borrow::Cow<'a, str>),
+    /// An array. [`FromIterator`] builds definite-length; a decoded indefinite one keeps its form
+    /// (clear [`CborSequence::is_indefinite`](types::CborSequence::is_indefinite) to re-encode definite).
     Sequence(types::CborSequence<Value<'a>>),
+    /// A map, with the same caveat as [`Value::Sequence`].
     Map(types::CborSequence<(Value<'a>, Value<'a>)>),
     Tagged((types::CborIntegerValue, Box<Value<'a>>)),
     SimpleValue(u8),
@@ -109,21 +114,25 @@ impl Value<'_> {
     }
 }
 
-/// Builds an indefinite length Array
+/// Builds a definite-length array (profile `draft-ietf-cbor-serialization-06` §4.1 item 2).
+/// Indefinite: `Value::Sequence(CborSequence::new_indefinite(MajorType::Array))`.
 impl<'a> FromIterator<Value<'a>> for Value<'a> {
     #[inline(always)]
     fn from_iter<T: IntoIterator<Item = Value<'a>>>(iter: T) -> Self {
-        let mut seq = types::CborSequence::new_indefinite(MajorType::Array);
+        let iter = iter.into_iter();
+        // The hint is capacity only: the header is written from the final item count
+        let mut seq = types::CborSequence::new_finite(MajorType::Array, iter.size_hint().0);
         seq.extend(iter);
         Self::Sequence(seq)
     }
 }
 
-/// Builds an indefinite length Map
+/// Builds a definite-length map, like the array impl above.
 impl<'a> FromIterator<(Value<'a>, Value<'a>)> for Value<'a> {
     #[inline(always)]
     fn from_iter<T: IntoIterator<Item = (Value<'a>, Value<'a>)>>(iter: T) -> Self {
-        let mut seq = types::CborSequence::new_indefinite(MajorType::Map);
+        let iter = iter.into_iter();
+        let mut seq = types::CborSequence::new_finite(MajorType::Map, iter.size_hint().0);
         seq.extend(iter);
         Self::Map(seq)
     }
@@ -139,7 +148,11 @@ impl ::serde_core::Serialize for Value<'_> {
         match self {
             Value::Integer(cbor_integer) => {
                 if cbor_integer.negative {
-                    serializer.serialize_i64(cbor_integer.try_into().unwrap())
+                    match i64::try_from(cbor_integer) {
+                        Ok(value) => serializer.serialize_i64(value),
+                        // Below i64::MIN only i128 can carry it: major type 1 holds down to -2^64
+                        Err(_) => serializer.serialize_i128(-(u64::from(cbor_integer) as i128) - 1),
+                    }
                 } else {
                     serializer.serialize_u64(cbor_integer.into())
                 }
@@ -166,17 +179,10 @@ impl ::serde_core::Serialize for Value<'_> {
 
                 seqmap.end()
             }
-            Value::Tagged((tag, value)) => serializer.serialize_newtype_struct(
-                crate::serde::DYN_TAGGED_TYP_NAME,
-                &crate::serde::DynamicTaggedValue {
-                    tag: *tag,
-                    value: std::borrow::Cow::Borrowed(value.as_ref()),
-                },
-            ),
-            Value::SimpleValue(v) => serializer.serialize_newtype_struct(
-                crate::serde::SimpleValue::TYP_NAME,
-                &crate::serde::SimpleValue(*v),
-            ),
+            Value::Tagged((tag, value)) => {
+                crate::serde::serialize_tagged(serializer, (*tag).into(), value.as_ref())
+            }
+            Value::SimpleValue(v) => crate::serde::serialize_simple_value(serializer, *v),
             Value::Bool(v) => serializer.serialize_bool(*v),
             Value::Null => serializer.serialize_none(),
             Value::Undefined => serializer.serialize_unit(),
@@ -216,6 +222,24 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
                 E: ::serde_core::de::Error,
             {
                 Ok(Value::Integer(v.into()))
+            }
+
+            #[inline(always)]
+            fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+            where
+                E: ::serde_core::de::Error,
+            {
+                if let Ok(value) = i64::try_from(v) {
+                    return self.visit_i64(value);
+                }
+                // Only CBOR's major type 1 range can be represented: -2^64 <= v < -1
+                match u64::try_from(-(v + 1)) {
+                    Ok(magnitude) => Ok(Value::Integer(types::CborInteger {
+                        value: magnitude.into(),
+                        negative: true,
+                    })),
+                    Err(_) => Err(E::custom("integer below CBOR's major type 1 range")),
+                }
             }
 
             #[inline(always)]
@@ -259,6 +283,14 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
             }
 
             #[inline(always)]
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: ::serde_core::de::Error,
+            {
+                Ok(Value::String(std::borrow::Cow::Owned(v.to_owned())))
+            }
+
+            #[inline(always)]
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
             where
                 E: ::serde_core::de::Error,
@@ -272,6 +304,14 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
                 E: ::serde_core::de::Error,
             {
                 Ok(Value::Bytes(std::borrow::Cow::Borrowed(v)))
+            }
+
+            #[inline(always)]
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: ::serde_core::de::Error,
+            {
+                Ok(Value::Bytes(std::borrow::Cow::Owned(v.to_vec())))
             }
 
             #[inline(always)]
@@ -311,9 +351,48 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
             where
                 D: ::serde_core::Deserializer<'de>,
             {
-                use ::serde_core::Deserialize as _;
-                let dtv = crate::serde::DynamicTaggedValue::deserialize(deserializer)?;
-                Ok(Value::Tagged((dtv.tag, Box::new(dtv.value.into_owned()))))
+                /// The name is hidden, so the payload decides: `visit_u8` is a simple value,
+                /// `visit_newtype_struct` a tag the accessor already put aside.
+                struct SentinelVisitor;
+
+                impl<'de> ::serde_core::de::Visitor<'de> for SentinelVisitor {
+                    type Value = Value<'de>;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        write!(formatter, "a CBOR simple value or a tagged CBOR Value")
+                    }
+
+                    #[inline(always)]
+                    fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+                    where
+                        E: ::serde_core::de::Error,
+                    {
+                        Ok(Value::SimpleValue(v))
+                    }
+
+                    #[inline(always)]
+                    fn visit_newtype_struct<D>(
+                        self,
+                        deserializer: D,
+                    ) -> Result<Self::Value, D::Error>
+                    where
+                        D: ::serde_core::Deserializer<'de>,
+                    {
+                        // The tag came through the thread-local; missing means a forged sentinel
+                        let tag = crate::serde::TAG.get().ok_or_else(|| {
+                            ::serde_core::de::Error::custom("tagged CBOR Value without a tag")
+                        })?;
+
+                        Ok(Value::Tagged((
+                            tag.into(),
+                            Box::new(<Value<'de> as ::serde_core::Deserialize<'de>>::deserialize(
+                                deserializer,
+                            )?),
+                        )))
+                    }
+                }
+
+                deserializer.deserialize_any(SentinelVisitor)
             }
 
             #[inline(always)]
@@ -321,7 +400,9 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
             where
                 A: ::serde_core::de::SeqAccess<'de>,
             {
-                let mut arr = Vec::with_capacity(seq.size_hint().unwrap_or(4).min(256));
+                // `0` when unknown: `Vec`'s first push allocates 4, so an empty container costs
+                // nothing (RFC 8949 §10; same idea as the hint).
+                let mut arr = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(256));
 
                 while let Some(elem) = seq.next_element()? {
                     arr.push(elem);
@@ -335,16 +416,118 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
             where
                 A: ::serde_core::de::MapAccess<'de>,
             {
-                let mut vmap = Vec::with_capacity(map.size_hint().unwrap_or(4).min(256));
+                // `Vec::into()` would say `Array`; a map's sequence carries the map major type
+                let mut vmap = types::CborSequence::new_finite(
+                    crate::mt::MajorType::Map,
+                    map.size_hint().unwrap_or(0).min(256),
+                );
 
                 while let Some((k, v)) = map.next_entry()? {
                     vmap.push((k, v));
                 }
 
-                Ok(Value::Map(vmap.into()))
+                Ok(Value::Map(vmap))
             }
         }
 
         deserializer.deserialize_any(ValueVisitor::default())
+    }
+}
+
+impl<'a> Value<'a> {
+    /// Drops the borrow. Shape survives (major type, definiteness), so re-serialising gives the
+    /// same bytes.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn into_owned(self) -> Value<'static> {
+        match self {
+            Value::Integer(value) => Value::Integer(value),
+            Value::Float(value) => Value::Float(value),
+            Value::Bytes(bytes) => Value::Bytes(std::borrow::Cow::Owned(bytes.into_owned())),
+            Value::String(string) => Value::String(std::borrow::Cow::Owned(string.into_owned())),
+            Value::Sequence(seq) => Value::Sequence(map_sequence(seq, Value::into_owned)),
+            Value::Map(map) => {
+                Value::Map(map_sequence(map, |(k, v)| (k.into_owned(), v.into_owned())))
+            }
+            Value::Tagged((tag, value)) => Value::Tagged((tag, Box::new(value.into_owned()))),
+            Value::SimpleValue(value) => Value::SimpleValue(value),
+            Value::Bool(value) => Value::Bool(value),
+            Value::Null => Value::Null,
+            Value::Undefined => Value::Undefined,
+        }
+    }
+}
+
+/// Converts the elements of a sequence, keeping its major type and its definiteness
+fn map_sequence<T: crate::ser::CborSerialize, U: crate::ser::CborSerialize>(
+    seq: types::CborSequence<T>,
+    mut convert: impl FnMut(T) -> U,
+) -> types::CborSequence<U> {
+    let mut converted = if seq.is_indefinite {
+        types::CborSequence::new_indefinite(seq.mt)
+    } else {
+        types::CborSequence::new_finite(seq.mt, seq.len())
+    };
+    converted.extend(seq.into_iter().map(&mut convert));
+    converted
+}
+
+/// A [`Value`] that owns its contents, for decoders that cannot lend bytes (`ciborium`, `cbor4ii`,
+/// anything streaming); `Value` itself is never `DeserializeOwned`.
+///
+/// ```
+/// use seabored::{OwnedValue, Value};
+///
+/// let value: Value<'static> = seabored::de::from_bytes(&[0x61, 0x61]).unwrap();
+/// let owned = OwnedValue::from(value);
+/// assert_eq!(*owned, Value::String("a".into()));
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OwnedValue(pub Value<'static>);
+
+impl std::ops::Deref for OwnedValue {
+    type Target = Value<'static>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Value<'static>> for OwnedValue {
+    #[inline(always)]
+    fn from(value: Value<'static>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<OwnedValue> for Value<'static> {
+    #[inline(always)]
+    fn from(value: OwnedValue) -> Self {
+        value.0
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ::serde_core::Serialize for OwnedValue {
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde_core::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> ::serde_core::Deserialize<'de> for OwnedValue {
+    /// Deserializes a [`Value`] then owns it — this is how the impl can be `for<'de>` where
+    /// `Value`'s cannot: the borrow is dropped inside the impl, not demanded of every caller.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: ::serde_core::Deserializer<'de>,
+    {
+        Ok(Self(
+            <Value<'de> as ::serde_core::Deserialize<'de>>::deserialize(deserializer)?.into_owned(),
+        ))
     }
 }

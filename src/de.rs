@@ -1,5 +1,5 @@
 use half::f16;
-use parsio::Read;
+use parsio::{DepthAwareReader, DepthAwareReaderGuard, Read};
 use std::borrow::Cow;
 
 use crate::{
@@ -11,10 +11,32 @@ use crate::{
     types::{CborInteger, CborIntegerValue, CborSequence},
 };
 
-pub trait CborDeserialize<'a> {
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
+/// Reads a single CBOR item from a byte slice, up to
+/// [`parsio::DepthAwareReader::DEFAULT_LIMIT`] nesting levels
+#[inline]
+pub fn from_bytes<'cbor, T: CborDeserialize<'cbor> + 'cbor>(
+    bytes: &'cbor [u8],
+) -> Result<T, SeaboredDeError> {
+    from_bytes_with_limit(bytes, <DepthAwareReader<'cbor, &'cbor [u8]>>::DEFAULT_LIMIT)
+}
+
+/// Reads a single CBOR item from a byte slice, allowing at most `limit` levels of nesting.
+#[inline]
+pub fn from_bytes_with_limit<'cbor, T: CborDeserialize<'cbor> + 'cbor>(
+    bytes: &'cbor [u8],
+    limit: u16,
+) -> Result<T, SeaboredDeError> {
+    let mut reader = DepthAwareReader::from_reader_with_limit(bytes, limit);
+    let mut guard = reader.enter()?;
+    T::cbor_deserialize_from(&mut guard)
+}
+
+pub trait CborDeserialize<'cbor> {
+    fn cbor_deserialize_from<R: Read<'cbor>>(
+        reader: &mut DepthAwareReaderGuard<'_, 'cbor, R>,
+    ) -> Result<Self, SeaboredDeError>
     where
-        Self: Sized + 'a;
+        Self: Sized + 'cbor;
 }
 
 impl<'a, T1, T2> CborDeserialize<'a> for (T1, T2)
@@ -23,7 +45,9 @@ where
     T2: CborDeserialize<'a>,
 {
     #[inline(always)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
+    fn cbor_deserialize_from<R: Read<'a>>(
+        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+    ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
@@ -34,7 +58,9 @@ where
 
 impl<'a> CborDeserialize<'a> for Value<'a> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError>
+    fn cbor_deserialize_from<R: Read<'a>>(
+        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+    ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
@@ -49,18 +75,31 @@ impl<'a> CborDeserialize<'a> for Value<'a> {
             AdditionalInfoAction::Uint64 => CborIntegerValue::from(reader.read_be_u64()?),
             AdditionalInfoAction::IndefiniteLenSeq => {
                 return match mt {
-                    MajorType::Bytes | MajorType::String | MajorType::Array => {
+                    MajorType::Bytes | MajorType::String => {
                         let mut seq = CborSequence::new_indefinite(mt);
+                        let mut reader = reader.enter()?;
                         while reader.peek_byte()? != ib::consts::IB_BREAK {
-                            seq.push(Value::cbor_deserialize_from(reader)?)
+                            // Appendix F kind 3 subkind 3, rule shared with the serde path
+                            InitialByte::peek(&mut reader)?.expect_string_chunk(mt)?;
+                            seq.push(Value::cbor_deserialize_from(&mut reader)?)
+                        }
+                        reader.advance(1)?; // Skip over the BREAK byte
+                        Ok(Value::Sequence(seq))
+                    }
+                    MajorType::Array => {
+                        let mut seq = CborSequence::new_indefinite(mt);
+                        let mut reader = reader.enter()?;
+                        while reader.peek_byte()? != ib::consts::IB_BREAK {
+                            seq.push(Value::cbor_deserialize_from(&mut reader)?)
                         }
                         reader.advance(1)?; // Skip over the BREAK byte
                         Ok(Value::Sequence(seq))
                     }
                     MajorType::Map => {
                         let mut seq = CborSequence::new_indefinite(mt);
+                        let mut reader = reader.enter()?;
                         while reader.peek_byte()? != ib::consts::IB_BREAK {
-                            seq.push(<(Value, Value)>::cbor_deserialize_from(reader)?)
+                            seq.push(<(Value, Value)>::cbor_deserialize_from(&mut reader)?)
                         }
                         reader.advance(1)?; // Skip over the BREAK byte
                         Ok(Value::Map(seq))
@@ -91,7 +130,15 @@ impl<'a> CborDeserialize<'a> for Value<'a> {
                 ib::consts::IB_NULL => Value::Null,
                 ib::consts::IB_UNDEFINED => Value::Undefined,
                 ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE => {
-                    Value::SimpleValue(value_or_len.try_into()?)
+                    // RFC 8949 §3.3: `f8` with an argument below 0x20 is not well-formed
+                    // (Appendix F kind 3 subkind 2), so the decoder must not accept it
+                    let value: u8 = value_or_len.try_into()?;
+                    if value < 0x20 {
+                        return Err(SeaboredDeError::NotWellFormed(
+                            "two-byte simple value with an argument below 0x20",
+                        ));
+                    }
+                    Value::SimpleValue(value)
                 }
                 ib::consts::IB_FLOAT_16 => {
                     Value::Float(f16::from_bits(value_or_len.try_into()?).into())
@@ -117,24 +164,35 @@ impl<'a> CborDeserialize<'a> for Value<'a> {
                 })
             }
             MajorType::Array => Value::Sequence({
-                let len = value_or_len.try_into()?;
-                let mut seq = CborSequence::new_finite(MajorType::Array, len);
+                let len: usize = value_or_len.try_into()?;
+                // Wire length is not a reason to allocate: one item needs >= 1 byte, so the
+                // remaining input bounds the pre-allocation (RFC 8949 §10).
+                let mut seq = CborSequence::new_finite(
+                    MajorType::Array,
+                    len.min(reader.remaining().unwrap_or(len)),
+                );
+                let mut reader = reader.enter()?;
                 for _ in 0..len {
-                    seq.push(Value::cbor_deserialize_from(reader)?)
+                    seq.push(Value::cbor_deserialize_from(&mut reader)?)
                 }
                 seq
             }),
             MajorType::Map => Value::Map({
-                let len = value_or_len.try_into()?;
-                let mut seq = CborSequence::new_finite(MajorType::Map, len);
+                let len: usize = value_or_len.try_into()?;
+                // As arrays; a map entry costs at least two items
+                let mut seq = CborSequence::new_finite(
+                    MajorType::Map,
+                    len.min(reader.remaining().unwrap_or(len) / 2),
+                );
+                let mut reader = reader.enter()?;
                 for _ in 0..len {
-                    seq.push(<(Value, Value)>::cbor_deserialize_from(reader)?)
+                    seq.push(<(Value, Value)>::cbor_deserialize_from(&mut reader)?)
                 }
                 seq
             }),
             MajorType::Tagged => Value::Tagged((
                 value_or_len,
-                Box::new(Value::cbor_deserialize_from(reader)?),
+                Box::new(Value::cbor_deserialize_from(&mut reader.enter()?)?),
             )),
         })
     }

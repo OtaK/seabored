@@ -1,7 +1,7 @@
 use crate::datasets::HasSample;
 
-pub const BYTES: &'static [u8] = include_bytes!("cbor/log.cbor");
-pub const ID: &'static str = "log";
+pub const BYTES: &[u8] = include_bytes!("cbor/log.cbor");
+pub const ID: &str = "log";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Address {

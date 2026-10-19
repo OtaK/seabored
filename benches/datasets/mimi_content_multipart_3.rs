@@ -5,8 +5,8 @@ use serde::ser::SerializeSeq as _;
 
 use crate::datasets::HasSample;
 
-pub const BYTES: &'static [u8] = include_bytes!("cbor/mimi-content-multipart-3.cbor");
-pub const ID: &'static str = "mimi-content-multipart-3";
+pub const BYTES: &[u8] = include_bytes!("cbor/mimi-content-multipart-3.cbor");
+pub const ID: &str = "mimi-content-multipart-3";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -169,6 +169,8 @@ impl<'de> serde::Deserialize<'de> for MultiPart<'de> {
     Debug, Clone, Copy, PartialEq, Eq, serde_repr::Serialize_repr, serde_repr::Deserialize_repr,
 )]
 #[repr(u8)]
+// Names mirror the schema they model
+#[allow(clippy::enum_variant_names)]
 pub enum NestedPartContentCardinality {
     NullPart = 0,
     SinglePart = 1,
@@ -176,6 +178,7 @@ pub enum NestedPartContentCardinality {
     MultiPart = 3,
 }
 
+#[allow(clippy::enum_variant_names)]
 pub enum NestedPartContent<'a> {
     NullPart,
     SinglePart(SinglePart<'a>),
@@ -195,6 +198,7 @@ impl NestedPartContent<'_> {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 pub enum NestedPartContentOwned {
     NullPart,
     SinglePart(SinglePartOwned),
@@ -591,7 +595,7 @@ impl<'de, ValueType: serde::Serialize + serde::de::DeserializeOwned + 'de> serde
     }
 }
 
-impl<'a, ValueType: serde::Serialize + serde::de::DeserializeOwned + 'a> HasSample
+impl<ValueType: serde::Serialize + serde::de::DeserializeOwned> HasSample
     for MimiContentOwned<ValueType>
 {
     #[inline(always)]

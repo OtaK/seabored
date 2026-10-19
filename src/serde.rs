@@ -1,31 +1,76 @@
-use crate::types::CborIntegerValue;
-use parsio::{Read, Write};
+use crate::error::SeaboredDeError;
+use parsio::{DepthAwareReader, DepthAwareReaderGuard, Read, Write};
 
 // Lil hack to pass over the serde fence
 thread_local! {
     pub(crate) static TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Tag of the value being serialized, handed over by [`serialize_tagged`]
+    pub(crate) static SER_TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Serializes `value` as a CBOR simple value, handing the `u8` over as the sentinel payload
+#[cfg_attr(feature = "inline-nontrivial", inline)]
+pub(crate) fn serialize_simple_value<S: ::serde_core::Serializer>(
+    serializer: S,
+    value: u8,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_newtype_struct(SimpleValue::TYP_NAME, &value)
+}
+
+/// Serializes `value` as CBOR tag `tag`, handing the tag over through [`SER_TAG`]
+#[cfg_attr(feature = "inline-nontrivial", inline)]
+pub(crate) fn serialize_tagged<S, T>(serializer: S, tag: u64, value: &T) -> Result<S::Ok, S::Error>
+where
+    S: ::serde_core::Serializer,
+    T: ?Sized + ::serde_core::Serialize,
+{
+    SER_TAG.set(Some(tag));
+    let result = serializer.serialize_newtype_struct(DYN_TAGGED_TYP_NAME, value);
+    // A foreign serializer may have ignored the sentinel name
+    SER_TAG.set(None);
+    result
 }
 
 mod serde_de;
 mod serde_ser;
 
-pub struct Deserializer<'de, R: Read<'de>> {
-    reader: R,
-    _marker: std::marker::PhantomData<&'de ()>,
+/// CBOR deserializer over a depth-tracking reader: one guard per level, containers hand their
+/// entered guard to a child.
+pub struct Deserializer<'de, 'a, R: Read<'de>> {
+    reader: DepthAwareReaderGuard<'a, 'de, R>,
 }
 
-impl<'de, R: Read<'de>> Deserializer<'de, R> {
+impl<'de, 'a, R: Read<'de>> Deserializer<'de, 'a, R> {
+    /// Wraps `reader`, entering level 1; errors on depth overflow.
     #[inline]
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            _marker: Default::default(),
-        }
+    pub fn new(reader: &'a mut DepthAwareReader<'de, R>) -> Result<Self, SeaboredDeError> {
+        Ok(Self {
+            reader: reader.enter()?,
+        })
     }
 
+    /// Wraps an already-entered guard. Used to descend one level per container.
     #[inline]
-    pub fn into_inner(self) -> R {
-        self.reader
+    pub(crate) fn from_guard(reader: DepthAwareReaderGuard<'a, 'de, R>) -> Self {
+        Self { reader }
+    }
+
+    /// Current nesting depth (1 for the top-level item).
+    #[inline]
+    pub fn depth(&self) -> u16 {
+        self.reader.depth()
+    }
+
+    /// Maximum nesting depth this deserializer will accept.
+    #[inline]
+    pub fn limit(&self) -> u16 {
+        self.reader.limit()
+    }
+
+    /// How many bytes are left in the input, if the underlying reader can tell without I/O.
+    #[inline]
+    pub fn remaining(&self) -> Option<usize> {
+        self.reader.remaining()
     }
 }
 
@@ -51,19 +96,65 @@ pub fn from_slice<'de, T: ::serde_core::Deserialize<'de>>(
     from_reader(buf)
 }
 
-#[inline(always)]
-/// Read a serde-enabled data structure from a type that implements our [`io::Read`] trait
-// You might want to use the [`io::StdReader`] adapter if you need that
-pub fn from_reader<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
-    reader: R,
+#[inline]
+/// Read a serde-enabled data structure from a slice, allowing at most `limit` levels of nesting.
+pub fn from_slice_with_limit<'de, T: ::serde_core::Deserialize<'de>>(
+    buf: &'de [u8],
+    limit: u16,
 ) -> Result<T, crate::error::SeaboredDeError> {
-    let mut deserializer = Deserializer::new(reader);
-    ::serde_core::Deserialize::deserialize(&mut deserializer)
+    from_reader_with_limit(buf, limit)
 }
 
 #[inline(always)]
-/// Serialize a data structure to a Writer that implements our [`io::Write`] trait
-/// You might want to use the [`io::StdWriter`] adapter if you need that
+/// Read a serde-enabled data structure from a slice, erroring out when bytes are left over
+pub fn from_slice_complete<'de, T: ::serde_core::Deserialize<'de>>(
+    buf: &'de [u8],
+) -> Result<T, crate::error::SeaboredDeError> {
+    from_reader_complete(buf)
+}
+
+#[inline(always)]
+/// Read a serde-enabled data structure from a type that implements parsio's [`Read`] trait.
+///
+/// Wrap a [`std::io::Read`] source in [`parsio::StdReader`] to use it here.
+///
+/// Nesting is limited to [`parsio::DepthAwareReader::DEFAULT_LIMIT`] levels
+pub fn from_reader<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+) -> Result<T, crate::error::SeaboredDeError> {
+    from_reader_with_limit(reader, DepthAwareReader::<'de, R>::DEFAULT_LIMIT)
+}
+
+#[inline]
+/// Read a serde-enabled data structure, allowing at most `limit` levels of nesting.
+pub fn from_reader_with_limit<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+    limit: u16,
+) -> Result<T, crate::error::SeaboredDeError> {
+    let mut reader = DepthAwareReader::from_reader_with_limit(reader, limit);
+    let mut deserializer = Deserializer::new(&mut reader)?;
+    ::serde_core::Deserialize::deserialize(&mut deserializer)
+}
+
+#[inline]
+/// Strict counterpart of [`from_reader`]: errors out when the input holds more than one item.
+pub fn from_reader_complete<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+) -> Result<T, crate::error::SeaboredDeError> {
+    let mut reader = DepthAwareReader::from_reader(reader);
+    let mut deserializer = Deserializer::new(&mut reader)?;
+    let value = ::serde_core::Deserialize::deserialize(&mut deserializer)?;
+
+    match deserializer.remaining() {
+        Some(0) | None => Ok(value),
+        Some(remaining) => Err(crate::error::SeaboredDeError::TrailingBytes(remaining)),
+    }
+}
+
+#[inline(always)]
+/// Serialize a data structure to a writer that implements parsio's [`Write`] trait.
+///
+/// Wrap a [`std::io::Write`] sink in [`parsio::StdWriter`] to use it here.
 pub fn to_writer<W: Write, T: ::serde_core::Serialize>(
     writer: &mut W,
     value: &T,
@@ -83,8 +174,7 @@ pub fn to_vec<T: ::serde_core::Serialize>(
     Ok(buf)
 }
 
-/// Wrapper for Tagged CBOR values
-/// This makes sure the tag is used when deserializing and emitted when serializing
+/// Tagged CBOR value: the tag is emitted on serialize and expected on deserialize.
 ///
 /// ## Example (serde)
 /// ```rust,ignore
@@ -100,77 +190,46 @@ pub struct Tagged<'a, const TAG: u64, V: 'a> {
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-#[derive(Debug)]
-pub(crate) struct DynamicTaggedValue<'a> {
-    pub(crate) tag: CborIntegerValue,
-    pub(crate) value: std::borrow::Cow<'a, crate::Value<'a>>,
-}
-
 pub(crate) const DYN_TAGGED_TYP_NAME: &str = "seabored::serde::DynamicTaggedValue";
 
-impl<'de> ::serde_core::Deserialize<'de> for DynamicTaggedValue<'de> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: ::serde_core::Deserializer<'de>,
-    {
-        struct DynamicTaggedValueVisitor;
-
-        impl<'de> ::serde_core::de::Visitor<'de> for DynamicTaggedValueVisitor {
-            type Value = DynamicTaggedValue<'de>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "A Dynamically tagged CBOR Value")
-            }
-
-            fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: ::serde_core::Deserializer<'de>,
-            {
-                use ::serde_core::Deserialize as _;
-                let tag = crate::serde::TAG.get().expect("This should never happen");
-                let value = crate::Value::deserialize(deserializer)?;
-                Ok(DynamicTaggedValue {
-                    tag: tag.into(),
-                    value: std::borrow::Cow::Owned(value),
-                })
-            }
-        }
-
-        deserializer.deserialize_newtype_struct(DYN_TAGGED_TYP_NAME, DynamicTaggedValueVisitor)
-    }
+/// What [`parse_tag_from_typ`] found in a `serialize_newtype_struct` / `deserialize_newtype_struct`
+/// name.
+pub(crate) enum TypeNameTag {
+    /// Not one of our `Tagged<…>` names: a foreign newtype struct.
+    NotOurs,
+    /// Ours, but the const generic did not parse. `type_name` has no stability guarantee:
+    /// caller-visible error, never a panic.
+    Unparsable,
+    Tag(u64),
 }
 
-impl<'a> ::serde_core::Serialize for DynamicTaggedValue<'a> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: ::serde_core::Serializer,
-    {
-        serializer.serialize_newtype_struct(DYN_TAGGED_TYP_NAME, self)
-    }
-}
-
-/// Internal only: Parses the tag value from the "seabored::serde::Tagged<'life, TAG, V>" form
-/// Returns `None` if non-matching
-///
-/// ## Warning
-/// Can panic if fed anything else than our own internals, hence the visibility of this fn
+/// Parses the tag value from the `seabored::serde::Tagged<'life, TAG, V>` form of a type name.
 #[inline(always)]
-pub(crate) fn parse_tag_from_typ(typ: &str) -> Option<u64> {
+pub(crate) fn parse_tag_from_typ(typ: &str) -> TypeNameTag {
     const TAGGED_VALUE_TYP_ROOT_NAME: &str = "seabored::serde::Tagged";
     // Split at the generics boundary to get (`seabored::serde::Tagged`, `'life, TAG, V>`)
-    let (tname, targs) = typ.split_once('<')?;
+    let Some((tname, targs)) = typ.split_once('<') else {
+        return TypeNameTag::NotOurs;
+    };
     if tname != TAGGED_VALUE_TYP_ROOT_NAME {
-        return None;
+        return TypeNameTag::NotOurs;
     }
 
-    let (_, targs) = targs.split_once(',').unwrap(); // SAFETY: Lifetime is always present in the type, skip over lifetime
-    let (tag_str, _) = targs.split_once(',').unwrap(); // SAFETY: const TAG: u64 is next
+    // Skip the lifetime, then read the const generic; anything else is an unknown rendering
+    let Some((_, targs)) = targs.split_once(',') else {
+        return TypeNameTag::Unparsable;
+    };
+    let Some((tag_str, _)) = targs.split_once(',') else {
+        return TypeNameTag::Unparsable;
+    };
     let tag_str = tag_str.trim();
-    Some(if tag_str == "u64::MAX" {
-        u64::MAX
-    } else {
-        tag_str.parse().unwrap() // SAFETY: Tag cannot be anything else than u64
-    })
+    if tag_str == "u64::MAX" {
+        return TypeNameTag::Tag(u64::MAX);
+    }
+    match tag_str.parse() {
+        Ok(tag) => TypeNameTag::Tag(tag),
+        Err(_) => TypeNameTag::Unparsable,
+    }
 }
 
 impl<'a, const TAG: u64, V: ::serde_core::Serialize + 'a> ::serde_core::Serialize
@@ -261,7 +320,7 @@ impl<'a, const TAG: u64, V: 'a> Tagged<'a, TAG, V> {
     }
 }
 
-/// Much like the [`TaggedValue`] wrapper, this is a wrapper around SimpleValues, since they need to be treated a tad differently
+/// Like [`Tagged`], a wrapper for simple values, which need special handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct SimpleValue(pub u8);
@@ -271,11 +330,12 @@ impl SimpleValue {
 }
 
 impl ::serde_core::Serialize for SimpleValue {
+    #[inline(always)]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: ::serde_core::Serializer,
     {
-        serializer.serialize_newtype_struct(Self::TYP_NAME, self)
+        serialize_simple_value(serializer, self.0)
     }
 }
 
@@ -309,8 +369,38 @@ impl<'de> ::serde_core::Deserialize<'de> for SimpleValue {
 mod tests {
     use crate::{
         Value,
-        serde::{SimpleValue, Tagged},
+        serde::{SimpleValue, Tagged, TypeNameTag, parse_tag_from_typ},
     };
+
+    #[test]
+    fn type_names_are_parsed_without_panicking() {
+        assert!(matches!(
+            parse_tag_from_typ("seabored::serde::Tagged<'_, 42, u8>"),
+            TypeNameTag::Tag(42)
+        ));
+        assert!(matches!(
+            parse_tag_from_typ("seabored::serde::Tagged<'_, u64::MAX, u8>"),
+            TypeNameTag::Tag(u64::MAX)
+        ));
+        // Foreign newtype names are not ours
+        assert!(matches!(
+            parse_tag_from_typ("other::Tagged<'_, 42, u8>"),
+            TypeNameTag::NotOurs
+        ));
+        assert!(matches!(parse_tag_from_typ("u8"), TypeNameTag::NotOurs));
+        // Ours, but not a rendering this code understands: an error for the caller, never a panic
+        for malformed in [
+            "seabored::serde::Tagged<'a>",
+            "seabored::serde::Tagged<'a, nope, u8>",
+            "seabored::serde::Tagged<'a, 42>",
+            "seabored::serde::Tagged<",
+        ] {
+            assert!(
+                matches!(parse_tag_from_typ(malformed), TypeNameTag::Unparsable),
+                "{malformed}"
+            );
+        }
+    }
 
     struct Repo;
     impl Repo {
@@ -420,6 +510,62 @@ mod tests {
                 bigsint: i128::MIN,
             }
         }
+    }
+
+    /// A sentinel name does not license reinterpreting the erased `&T`: forging one errors.
+    #[test]
+    fn sentinel_names_are_not_a_licence_to_reinterpret() {
+        use crate::error::SeaboredSerError;
+
+        #[derive(Debug)]
+        struct Impostor {
+            name: &'static str,
+            /// Laid out like no sentinel: the old casts read these bytes as one
+            payload: [u8; 24],
+        }
+
+        impl ::serde_core::Serialize for Impostor {
+            fn serialize<S: ::serde_core::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                debug_assert_eq!(self.payload.len(), 24);
+                s.serialize_newtype_struct(self.name, &self.payload)
+            }
+        }
+
+        let mut names = vec!["seabored::serde::SimpleValue", super::DYN_TAGGED_TYP_NAME];
+        #[cfg(feature = "hazmat")]
+        names.push(crate::types::RawValue::TYP_NAME);
+
+        for name in names {
+            let err = crate::serde::to_vec(&Impostor {
+                name,
+                payload: [0x11; 24],
+            })
+            .expect_err("an impostor must not reach the payload");
+
+            assert!(
+                matches!(err, SeaboredSerError::Serde(_)),
+                "{name} returned {err:?}"
+            );
+        }
+
+        // Legit paths still work afterwards
+        pretty_assertions::assert_eq!(crate::serde::to_vec(&SimpleValue(19)).unwrap(), vec![0xf3]);
+        pretty_assertions::assert_eq!(
+            crate::serde::to_vec(&crate::Value::Tagged((
+                2u64.into(),
+                Box::new(crate::Value::Bool(true))
+            )))
+            .unwrap(),
+            vec![0xc2, 0xf5]
+        );
+        #[cfg(feature = "hazmat")]
+        pretty_assertions::assert_eq!(
+            crate::serde::to_vec(&crate::types::RawValue::from_slice_unchecked(&[
+                0x82, 0x01, 0x02
+            ]))
+            .unwrap(),
+            vec![0x82, 0x01, 0x02]
+        );
     }
 
     #[wasm_bindgen_test::wasm_bindgen_test(unsupported = test)]

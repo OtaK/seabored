@@ -3,10 +3,11 @@ use crate::{
     ib,
     mt::MajorType,
     ser::CborSerialize,
-    serde::{DYN_TAGGED_TYP_NAME, DynamicTaggedValue, Serializer, SimpleValue, parse_tag_from_typ},
+    serde::{DYN_TAGGED_TYP_NAME, Serializer, SimpleValue, TypeNameTag, parse_tag_from_typ},
     types::CborIntegerValue,
 };
 
+use ::serde_core::ser::Impossible;
 use parsio::Write;
 
 impl ::serde_core::ser::Error for SeaboredSerError {
@@ -156,55 +157,43 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
         T: ?Sized + ::serde_core::Serialize,
     {
         if name == SimpleValue::TYP_NAME {
-            // SAFETY: Because of the newtype struct name match, and the fact
-            // that [`SimpleValue`] is `#[repr(transparent)]` over its single [`u8`] member,
-            // we can ascertain that extracting a u8 from a pointer to [`SimpleValue`] is
-            // always safe
-            //
-            // Yeah yeah I know it looks ugly and shady but blame serde type erasure for this
-            let sv: u8 = unsafe { std::ptr::read(value as *const _ as *const u8) };
-
-            return if sv <= crate::types::IB_LIMIT {
-                self.writer.write(&[ib::consts::IB_SIMPLE_VALUE | sv])
-            } else {
-                self.writer
-                    .write(&[ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE, sv])
-            }
-            .map_err(Into::into);
+            // Not interpreted: the payload travels as a value (see `serialize_simple_value`)
+            return value.serialize(&mut VerbatimSerialiser(&mut self.writer));
         }
 
         #[cfg(feature = "hazmat")]
         if name == crate::types::RawValue::TYP_NAME {
-            // SAFETY: The newtype-struct name sentinel guarantees that T == RawValue.
-            // RawValue is #[repr(transparent)] over Vec<u8>, so the pointer cast is sound.
-            let raw: &crate::types::RawValue =
-                unsafe { &*(value as *const T as *const crate::types::RawValue).cast() };
-            return self.writer.write(raw.as_bytes()).map_err(Into::into);
+            // Same, except the payload is the bytes themselves: written verbatim, no framing
+            return value.serialize(&mut VerbatimSerialiser(&mut self.writer));
         }
 
         if name == DYN_TAGGED_TYP_NAME {
-            // SAFETY: If we get this type name, then treat the value as a DynamicTaggedValue ref
-            let dyn_tagged: &DynamicTaggedValue =
-                unsafe { &*(value as *const T as *const DynamicTaggedValue).cast() };
+            // Tag from `SER_TAG`; the value serializes normally
+            let tag = crate::serde::SER_TAG.take().ok_or_else(|| {
+                SeaboredSerError::Serde(
+                    "serialized the `DynamicTaggedValue` sentinel without a tag".into(),
+                )
+            })?;
 
             // Write tag
-            let written = dyn_tagged
-                .tag
+            let written = CborIntegerValue::from(tag)
                 .serialize_complex_mt_preamble(MajorType::Tagged, &mut self.writer)?;
 
             // And value
-            use ::serde_core::Serialize as _;
-            return Ok(written + dyn_tagged.value.serialize(self)?);
+            return Ok(written + value.serialize(self)?);
         }
 
-        // Special TaggedValue struct handling
-        // We're going to output the tag before outputting the value
-        let written = if let Some(tag) = parse_tag_from_typ(name) {
+        // Tagged: tag first, then the value
+        let written = match parse_tag_from_typ(name) {
+            TypeNameTag::NotOurs => 0,
+            TypeNameTag::Unparsable => {
+                return Err(SeaboredSerError::Serde(
+                    "unparsable `Tagged` type name: its tag cannot be recovered".into(),
+                ));
+            }
             // Serialize tag value first
-            CborIntegerValue::from(tag)
-                .serialize_complex_mt_preamble(MajorType::Tagged, &mut self.writer)?
-        } else {
-            0
+            TypeNameTag::Tag(tag) => CborIntegerValue::from(tag)
+                .serialize_complex_mt_preamble(MajorType::Tagged, &mut self.writer)?,
         };
 
         Ok(written + value.serialize(self)?)
@@ -523,4 +512,105 @@ impl<W: Write> ::serde_core::ser::SerializeStructVariant for SequenceSerializer<
         }
         Ok(self.written)
     }
+}
+
+/// Rejects every call a sentinel payload is not allowed to make.
+macro_rules! verbatim_payload_only {
+    ($( fn $name:ident $(<$g:ident>)? ( $( $arg:ident : $ty:ty ),* $(,)? ) -> $ret:ty ; )*) => {
+        $(
+            #[inline]
+            #[allow(unused_variables)]
+            fn $name $(<$g: ?Sized + ::serde_core::Serialize>)? (self $(, $arg: $ty)*)
+                -> Result<$ret, Self::Error>
+            {
+                Err(SeaboredSerError::Serde(
+                    "expected a simple value or raw bytes payload".into(),
+                ))
+            }
+        )*
+    };
+}
+
+/// Verbatim payloads: a simple-value byte, or raw bytes (no framing). Everything else errors.
+struct VerbatimSerialiser<'w, W: Write>(&'w mut W);
+
+impl<W: Write> ::serde_core::Serializer for &mut VerbatimSerialiser<'_, W> {
+    type Ok = usize;
+    type Error = SeaboredSerError;
+
+    type SerializeSeq = Impossible<usize, SeaboredSerError>;
+    type SerializeTuple = Impossible<usize, SeaboredSerError>;
+    type SerializeTupleStruct = Impossible<usize, SeaboredSerError>;
+    type SerializeTupleVariant = Impossible<usize, SeaboredSerError>;
+    type SerializeMap = Impossible<usize, SeaboredSerError>;
+    type SerializeStruct = Impossible<usize, SeaboredSerError>;
+    type SerializeStructVariant = Impossible<usize, SeaboredSerError>;
+
+    /// The simple value sentinel's payload
+    #[inline]
+    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
+        // 20..=23 are false/true/null/undefined and 24..=31 are reserved (RFC 8949 §3.3)
+        if (20..32).contains(&v) {
+            return Err(SeaboredSerError::ReservedSimpleValue(v));
+        }
+        Ok(if v <= crate::types::IB_LIMIT {
+            self.0.write(&[ib::consts::IB_SIMPLE_VALUE | v])?
+        } else {
+            self.0.write(&[ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE, v])?
+        })
+    }
+
+    /// The `RawValue` sentinel's payload, written with no framing
+    #[inline]
+    fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        Ok(self.0.write(v)?)
+    }
+
+    verbatim_payload_only!(
+        fn serialize_bool(v: bool) -> Self::Ok;
+        fn serialize_i8(v: i8) -> Self::Ok;
+        fn serialize_i16(v: i16) -> Self::Ok;
+        fn serialize_i32(v: i32) -> Self::Ok;
+        fn serialize_i64(v: i64) -> Self::Ok;
+        fn serialize_u16(v: u16) -> Self::Ok;
+        fn serialize_u32(v: u32) -> Self::Ok;
+        fn serialize_u64(v: u64) -> Self::Ok;
+        fn serialize_f32(v: f32) -> Self::Ok;
+        fn serialize_f64(v: f64) -> Self::Ok;
+        fn serialize_char(v: char) -> Self::Ok;
+        fn serialize_str(v: &str) -> Self::Ok;
+        fn serialize_none() -> Self::Ok;
+        fn serialize_unit() -> Self::Ok;
+        fn serialize_unit_struct(name: &'static str) -> Self::Ok;
+        fn serialize_unit_variant(
+            name: &'static str,
+            index: u32,
+            variant: &'static str,
+        ) -> Self::Ok;
+        fn serialize_seq(len: Option<usize>) -> Self::SerializeSeq;
+        fn serialize_tuple(len: usize) -> Self::SerializeTuple;
+        fn serialize_tuple_struct(name: &'static str, len: usize) -> Self::SerializeTupleStruct;
+        fn serialize_map(len: Option<usize>) -> Self::SerializeMap;
+        fn serialize_struct(name: &'static str, len: usize) -> Self::SerializeStruct;
+        fn serialize_struct_variant(
+            name: &'static str,
+            index: u32,
+            variant: &'static str,
+            len: usize,
+        ) -> Self::SerializeStructVariant;
+        fn serialize_some<T>(value: &T) -> Self::Ok;
+        fn serialize_newtype_struct<T>(name: &'static str, value: &T) -> Self::Ok;
+        fn serialize_newtype_variant<T>(
+            name: &'static str,
+            index: u32,
+            variant: &'static str,
+            value: &T,
+        ) -> Self::Ok;
+        fn serialize_tuple_variant(
+            name: &'static str,
+            variant_index: u32,
+            variant: &'static str,
+            len: usize,
+        ) -> Self::SerializeTupleVariant;
+    );
 }

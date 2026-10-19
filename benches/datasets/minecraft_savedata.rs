@@ -1,7 +1,7 @@
 use crate::datasets::HasSample;
 
-pub const BYTES: &'static [u8] = include_bytes!("cbor/minecraft_savedata.cbor");
-pub const ID: &'static str = "minecraft-savedata";
+pub const BYTES: &[u8] = include_bytes!("cbor/minecraft_savedata.cbor");
+pub const ID: &str = "minecraft-savedata";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[repr(u8)]

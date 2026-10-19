@@ -1,6 +1,6 @@
 [package]
 name = "seabored"
-version = "0.1.0"
+version = "0.2.0-pre.0"
 edition = "2024"
 rust-version = "1.95"
 include = ["src/**/*", "LICENSE-*", "README.md"]
@@ -32,7 +32,7 @@ hazmat = []
 [dependencies]
 thiserror = "2"
 half = "2"
-parsio = { version = "0.0.2", features = ["std"] }
+parsio = { version = "0.1.0-rc.3", features = ["std"] }
 simdutf8 = "0.1"
 serde_core = { version = "1", optional = true }
 
@@ -52,7 +52,7 @@ cbor4ii = { version = "1", features = ["half-f16", "use_std", "serde1"] }
 ciborium = "0.2"
 
 [target.'cfg(not(all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown")))'.dev-dependencies]
-gungraun = "0.19.4"
+gungraun = "0.20.0"
 criterion = "0.8"
 
 [target.'cfg(not(any(target_env = "msvc", all(any(target_arch = "wasm32", target_arch = "wasm64"), target_os = "unknown"))))'.dev-dependencies]
@@ -77,3 +77,8 @@ debug = true
 lto = "thin"
 debug-assertions = false
 codegen-units = 1
+
+[[bench]]
+name = "perf_integers"
+required-features = ["serde", "inline-nontrivial"]
+harness = false

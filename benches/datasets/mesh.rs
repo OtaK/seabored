@@ -1,7 +1,7 @@
 use crate::datasets::HasSample;
 
-pub const BYTES: &'static [u8] = include_bytes!("cbor/mesh.cbor");
-pub const ID: &'static str = "mesh";
+pub const BYTES: &[u8] = include_bytes!("cbor/mesh.cbor");
+pub const ID: &str = "mesh";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Vector3 {

@@ -2,7 +2,7 @@ use crate::{
     de::CborDeserialize, error::SeaboredDeError, io::ReadExt as _, mt::MajorType,
     types::CborIntegerValue,
 };
-use parsio::Read;
+use parsio::{DepthAwareReaderGuard, Read};
 
 pub mod consts {
     pub const IB_SMALL_UINT: u8 = 0x00;
@@ -71,18 +71,17 @@ pub struct InitialByte(pub(crate) u8);
 impl From<MajorType> for InitialByte {
     #[inline(always)]
     fn from(value: MajorType) -> Self {
-        // SAFETY: CBOR defines the relationship between Major Types and InitialByte
-        // Since Major Types go from 0 to 7 included, the max value when shifted by 5 becomes 224
-        // which is the InitialByte for SimpleValues
-        // Additionally, since [`InitialByte`] has a repr(transparent) over its u8 member, this
-        // is a valid transmute
+        // SAFETY: MajorType is 0..=7, so `<< 5` lands in 0..=224, a valid InitialByte;
+        // repr(transparent) over u8 makes the transmute sound.
         unsafe { std::mem::transmute((value as u8) << 5) }
     }
 }
 
 impl<'a> CborDeserialize<'a> for InitialByte {
     #[inline(always)]
-    fn cbor_deserialize_from<R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError> {
+    fn cbor_deserialize_from<R: Read<'a>>(
+        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+    ) -> Result<Self, SeaboredDeError> {
         reader.read_byte().map(InitialByte).map_err(Into::into)
     }
 }
@@ -115,6 +114,19 @@ impl InitialByte {
     #[inline(always)]
     pub fn peek<'a, R: Read<'a>>(reader: &mut R) -> Result<Self, SeaboredDeError> {
         reader.peek_byte().map(Self).map_err(Into::into)
+    }
+
+    /// A chunk must be a definite-length string of the same major type; such strings do not nest
+    /// (RFC 8949 §3.2.3, Appendix F kind 3 subkind 3).
+    #[inline(always)]
+    pub(crate) fn expect_string_chunk(self, expected: MajorType) -> Result<(), SeaboredDeError> {
+        let (mt, ai) = self.mt_ai();
+        if mt != expected || ai.action()? == AdditionalInfoAction::IndefiniteLenSeq {
+            return Err(SeaboredDeError::NotWellFormed(
+                "indefinite-length string chunk of another major type, or an indefinite-length string chunk",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -176,5 +188,6 @@ pub(crate) enum AdditionalInfoAction {
     Uint16 = 1 << 1,
     Uint32 = 1 << 2,
     Uint64 = 1 << 3,
-    IndefiniteLenSeq = consts::IB_BREAK, // We'll look for BREAK code which is 0xFF
+    /// ai = 31: an indefinite-length start, or the break item when the major type is 7
+    IndefiniteLenSeq = 1 << 4,
 }
