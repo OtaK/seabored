@@ -50,6 +50,10 @@ impl CborSerialize for Value<'_> {
                 .serialize_complex_mt_preamble(MajorType::Tagged, writer)?
                 + value.cbor_serialize_to(writer)?),
             Value::SimpleValue(value) => {
+                // 20..=23 mean false/true/null/undefined and 24..=31 are reserved (RFC 8949 §3.3)
+                if (20..32).contains(value) {
+                    return Err(SeaboredSerError::ReservedSimpleValue(*value));
+                }
                 if value <= &IB_LIMIT {
                     Ok(writer.write(&[ib::consts::IB_SIMPLE_VALUE | value])?)
                 } else {

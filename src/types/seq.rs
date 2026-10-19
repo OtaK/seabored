@@ -7,6 +7,8 @@ const MAX_PREALLOC_CAPACITY: usize = 256;
 pub struct CborSequence<T: CborSerialize> {
     inner: Vec<T>,
     pub mt: MajorType,
+    /// Indefinite form (`9f`/`bf` … `ff`, RFC 8949 §3.2.2). Decoding preserves it; set `false`
+    /// to re-encode definite, as the profile requires.
     pub is_indefinite: bool,
 }
 
@@ -21,6 +23,45 @@ impl<T: CborSerialize> Default for CborSequence<T> {
     }
 }
 
+impl<T: CborSerialize> IntoIterator for CborSequence<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    /// Consuming access; `Deref` gives borrowed access.
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl<'a, T: CborSerialize> IntoIterator for &'a CborSequence<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    /// Borrowed access, no clone.
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter()
+    }
+}
+
+impl<T: CborSerialize> Extend<T> for CborSequence<T> {
+    /// Appends items; `mt` and `is_indefinite` are kept.
+    #[inline(always)]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.inner.extend(iter);
+    }
+}
+
+impl<T: CborSerialize> FromIterator<T> for CborSequence<T> {
+    /// Definite-length array (RFC 8949 §3.2.2, profile §4.1 item 2). Indefinite stays explicit:
+    /// [`CborSequence::new_indefinite`].
+    #[inline(always)]
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::from(iter.into_iter().collect::<Vec<T>>())
+    }
+}
+
 impl<T: CborSerialize> CborSequence<T> {
     #[inline(always)]
     pub fn new_finite(mt: MajorType, len: usize) -> Self {
@@ -31,13 +72,12 @@ impl<T: CborSerialize> CborSequence<T> {
         }
     }
 
+    /// The indefinite-length form, which the profile forbids encoding — hence explicit.
     #[inline(always)]
     pub fn new_indefinite(mt: MajorType) -> Self {
         Self {
-            // Preallocate 4 entries (the allocation strategy is 0, 1, 4, 8, ...)
-            // so we amortize-ish ahead because indefinite collections are usually
-            // not small
-            inner: Vec::with_capacity(MAX_PREALLOC_CAPACITY),
+            // Lazy: pre-allocating here is capacity an attacker picks for free (RFC 8949 §10)
+            inner: Vec::new(),
             mt,
             is_indefinite: true,
         }

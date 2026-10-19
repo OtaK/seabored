@@ -28,9 +28,10 @@ If you want examples, please head to the `benches` folder.
 - As always, Serde de/ser is quirky as hell with CBOR since the Rust types do not map very well to CBOR primitives.
   - `Option::None` is serialized as CBOR Null SimpleValue
   - `()` unit type is serialized as CBOR Undefined SimpleValue
-  - Enums are serialized as a 1-entry map of { variant_name => contents }
+  - Enums follow serde's external tagging: a unit variant is a bare text string
+    (`"Variant"`), any other variant a 1-entry map of { variant_name => contents }
   - TODO: list more quirks?
-- The library *might* serialize things a bit differently than what it deserialized. The reason being is that the library prefers the preferred-plus serialization scheme, and things like indefinite length sequences are forbidden in this scheme. We still tolerate them but *might* avoid reserializing them.
+- Encoding follows what a `Value` says. Every constructor — `FromIterator` included — builds the definite-length form the preferred-plus scheme requires, while a container that came off the wire keeps the form it had, so a decode → encode round trip reproduces indefinite-length items as they arrived. To re-encode a decoded container in the preferred form, clear `CborSequence::is_indefinite`; the items themselves are untouched.
 - There's some `unsafe` here and there to juice out more performance where applicable. If you don't like it, then use something else. Fuzzing is in place to minimize risk here.
 
 ## Features

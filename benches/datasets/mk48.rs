@@ -1,7 +1,7 @@
 use crate::datasets::HasSample;
 
-pub const BYTES: &'static [u8] = include_bytes!("cbor/mk48.cbor");
-pub const ID: &'static str = "mk48";
+pub const BYTES: &[u8] = include_bytes!("cbor/mk48.cbor");
+pub const ID: &str = "mk48";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
