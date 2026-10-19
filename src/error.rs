@@ -14,6 +14,8 @@ pub enum SeaboredSerError {
         "Unexpected Major type for complex type preamble, expected one of (Bytes, String, Array, Map, Tagged), but got: {0}"
     )]
     UnexpectedPreambleMajorType(MajorType),
+    #[error("SimpleValue {0} cannot be encoded; 20..=31 are not simple values (RFC 8949 §3.3)")]
+    ReservedSimpleValue(u8),
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     Serde(String),
@@ -28,10 +30,6 @@ pub enum SeaboredDeError {
     Io(#[from] std::io::Error),
     #[error("I/O Error: {0}")]
     IoKind(std::io::ErrorKind),
-    #[error(
-        "Allowed depth exceeded (billion laughs detected?), we are {depth} levels deep but only {limit} is allowed"
-    )]
-    AllowedDepthOverflow { depth: usize, limit: usize },
     #[error("Wrong MajorType encountered, got {actual}, expected one of {expected:?}")]
     IncorrectMajorType {
         actual: MajorType,
@@ -39,6 +37,8 @@ pub enum SeaboredDeError {
     },
     #[error("Wrong InitialByte encountered, got {actual}, expected {expected}")]
     IncorrectInitialByte { actual: u8, expected: u8 },
+    #[error("Wrong InitialByte encountered, got {actual:#04x}, expected one of {expected:02x?}")]
+    IncorrectInitialByteSet { actual: u8, expected: &'static [u8] },
     #[error(transparent)]
     SimdUtf8Error(#[from] simdutf8::basic::Utf8Error),
     #[error(transparent)]
@@ -59,8 +59,16 @@ pub enum SeaboredDeError {
     UnsupportedSimpleValue(u8),
     #[error("Indefinite len value - not an error that is supposed to be user-visible")]
     IndefiniteLen,
+    #[error("Not well-formed CBOR: {0}")]
+    NotWellFormed(&'static str),
     #[error("A CBOR Sequence has the wrong number of elements, expected {expected}, but got {got}")]
     WrongLen { expected: usize, got: usize },
+    #[error("The array holds more elements than the {expected} the type asked for")]
+    TooManyElements { expected: usize },
+    #[error("Bignum holds {0} significant bytes, which does not fit in the target integer type")]
+    BignumTooLarge(usize),
+    #[error("{0} bytes left over after the item was decoded")]
+    TrailingBytes(usize),
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]

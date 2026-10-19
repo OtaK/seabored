@@ -1,16 +1,14 @@
 use color_eyre::eyre::Result;
 use half::f16;
 use pretty_assertions::{assert_eq, assert_ne};
-use seabored::{
-    Value, de::CborDeserialize as _, mt::MajorType, ser::CborSerialize as _, types::CborSequence,
-};
+use seabored::{Value, mt::MajorType, ser::CborSerialize as _, types::CborSequence};
 
 macro_rules! assert_value_eq_bytes {
     ($value:expr, $hexstring:literal) => {
         let bytes = hex_literal::hex!($hexstring);
         assert_eq!(
             $value,
-            Value::cbor_deserialize_from(&mut &bytes[..]).unwrap(),
+            seabored::de::from_bytes::<Value>(&bytes).unwrap(),
             "deser: value != parse(bytes)"
         );
         assert_eq!(
@@ -19,6 +17,19 @@ macro_rules! assert_value_eq_bytes {
             "ser: value.ser() != bytes"
         );
     };
+}
+
+/// Appendix A's indefinite containers, requested explicitly: `FromIterator` builds definite.
+fn indefinite_array<'a, I: IntoIterator<Item = Value<'a>>>(items: I) -> Value<'a> {
+    let mut seq = CborSequence::new_indefinite(MajorType::Array);
+    seq.extend(items);
+    Value::Sequence(seq)
+}
+
+fn indefinite_map<'a, I: IntoIterator<Item = (Value<'a>, Value<'a>)>>(items: I) -> Value<'a> {
+    let mut seq = CborSequence::new_indefinite(MajorType::Map);
+    seq.extend(items);
+    Value::Map(seq)
 }
 
 /// https://www.rfc-editor.org/rfc/rfc8949.html#name-examples-of-encoded-cbor-da
@@ -56,14 +67,11 @@ fn appendix_a() -> Result<()> {
     assert_value_eq_bytes!(Value::Float(f16::from_f32(1.5).into()), "f93e00");
     assert_value_eq_bytes!(Value::Float(f16::from_f32(65504.0).into()), "f97bff");
     assert_value_eq_bytes!(Value::Float(100000.0_f32.into()), "fa47c35000");
-    assert_value_eq_bytes!(Value::Float(3.4028234663852886e38_f32.into()), "fa7f7fffff");
+    assert_value_eq_bytes!(Value::Float(3.402_823_5e38_f32.into()), "fa7f7fffff");
     assert_value_eq_bytes!(Value::Float(1.0e+300_f64.into()), "fb7e37e43c8800759c");
+    assert_value_eq_bytes!(Value::Float(f16::from_f32(5.960_464_5e-8).into()), "f90001");
     assert_value_eq_bytes!(
-        Value::Float(f16::from_f32(5.960464477539063e-8).into()),
-        "f90001"
-    );
-    assert_value_eq_bytes!(
-        Value::Float(f16::from_f32(0.00006103515625).into()),
+        Value::Float(f16::from_f32(0.000_061_035_156).into()),
         "f90400"
     );
     assert_value_eq_bytes!(Value::Float(f16::from_f32(-4.).into()), "f9c400");
@@ -73,7 +81,7 @@ fn appendix_a() -> Result<()> {
     // NaN should never be equal to itself
     {
         let bytes = hex_literal::hex!("f97e00");
-        let nan_value = Value::cbor_deserialize_from(&mut &bytes[..]).unwrap();
+        let nan_value = seabored::de::from_bytes::<Value>(&bytes).unwrap();
         assert_ne!(Value::Float(f16::NAN.into()), nan_value);
         let Value::Float(float) = &nan_value else {
             panic!("f16-sized NaN isn't a f16");
@@ -90,7 +98,7 @@ fn appendix_a() -> Result<()> {
 
     {
         let bytes = hex_literal::hex!("fa7fc00000");
-        let nan_value = Value::cbor_deserialize_from(&mut &bytes[..]).unwrap();
+        let nan_value = seabored::de::from_bytes::<Value>(&bytes).unwrap();
         assert_ne!(Value::Float(f32::NAN.into()), nan_value);
         let Value::Float(float) = &nan_value else {
             panic!("f32-sized NaN isn't a f32");
@@ -113,7 +121,7 @@ fn appendix_a() -> Result<()> {
 
     {
         let bytes = hex_literal::hex!("fb7ff8000000000000");
-        let nan_value = Value::cbor_deserialize_from(&mut &bytes[..]).unwrap();
+        let nan_value = seabored::de::from_bytes::<Value>(&bytes).unwrap();
         assert_ne!(Value::Float(f64::NAN.into()), nan_value);
         let Value::Float(float) = &nan_value else {
             panic!("f64-sized NaN isn't a f64");
@@ -319,19 +327,19 @@ fn appendix_a() -> Result<()> {
         "7f657374726561646d696e67ff"
     );
 
-    assert_value_eq_bytes!(Value::from_iter::<Vec<Value>>(vec![]), "9fff");
+    assert_value_eq_bytes!(indefinite_array(Vec::<Value>::new()), "9fff");
 
     assert_value_eq_bytes!(
-        Value::from_iter([
+        indefinite_array([
             Value::Integer(1u8.into()),
             Value::Sequence((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
-            Value::from_iter([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
+            indefinite_array([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
         ]),
         "9f018202039f0405ffff"
     );
 
     assert_value_eq_bytes!(
-        Value::from_iter([
+        indefinite_array([
             Value::Integer(1u8.into()),
             Value::Sequence((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
             Value::Sequence((vec![Value::Integer(4u8.into()), Value::Integer(5u8.into())]).into())
@@ -346,7 +354,7 @@ fn appendix_a() -> Result<()> {
                 Value::Sequence(
                     (vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()
                 ),
-                Value::from_iter([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
+                indefinite_array([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
             ])
             .into()
         ),
@@ -357,7 +365,7 @@ fn appendix_a() -> Result<()> {
         Value::Sequence(
             vec![
                 Value::Integer(1u8.into()),
-                Value::from_iter(vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]),
+                indefinite_array(vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]),
                 Value::Sequence(CborSequence::from(vec![
                     Value::Integer(4u8.into()),
                     Value::Integer(5u8.into())
@@ -369,16 +377,16 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::from_iter((1u8..=25).map(|v| Value::Integer(v.into()))),
+        indefinite_array((1u8..=25).map(|v| Value::Integer(v.into()))),
         "9f0102030405060708090a0b0c0d0e0f101112131415161718181819ff"
     );
 
     assert_value_eq_bytes!(
-        Value::from_iter([
+        indefinite_map([
             (Value::String("a".into()), Value::Integer(1u8.into())),
             (
                 Value::String("b".into()),
-                Value::from_iter([Value::Integer(2u8.into()), Value::Integer(3u8.into())])
+                indefinite_array([Value::Integer(2u8.into()), Value::Integer(3u8.into())])
             )
         ]),
         "bf61610161629f0203ffff"
@@ -388,7 +396,7 @@ fn appendix_a() -> Result<()> {
         Value::Sequence(
             vec![
                 Value::String("a".into()),
-                Value::from_iter([(Value::String("b".into()), Value::String("c".into()))])
+                indefinite_map([(Value::String("b".into()), Value::String("c".into()))])
             ]
             .into()
         ),
@@ -396,7 +404,7 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::from_iter([
+        indefinite_map([
             (Value::String("Fun".into()), Value::Bool(true)),
             (Value::String("Amt".into()), Value::Integer((-2i8).into()))
         ]),
@@ -406,10 +414,199 @@ fn appendix_a() -> Result<()> {
     Ok(())
 }
 
-/// Implementation of the non-well-formed checks
+/// `FromIterator` builds definite-length; indefinite only on explicit request.
+#[wasm_bindgen_test::wasm_bindgen_test(unsupported = test)]
+fn from_iter_is_definite_length() -> Result<()> {
+    assert_value_eq_bytes!(
+        vec![Value::Integer(1u8.into()), Value::Integer(2u8.into())]
+            .into_iter()
+            .collect::<Value>(),
+        "820102"
+    );
+    assert_value_eq_bytes!(
+        [(Value::String("a".into()), Value::Integer(1u8.into()))]
+            .into_iter()
+            .collect::<Value>(),
+        "a1616101"
+    );
+    // The explicit ask still produces the indefinite form, for both container kinds
+    assert_value_eq_bytes!(
+        indefinite_array([Value::Integer(1u8.into()), Value::Integer(2u8.into())]),
+        "9f0102ff"
+    );
+    assert_value_eq_bytes!(
+        indefinite_map([(Value::String("a".into()), Value::Integer(1u8.into()))]),
+        "bf616101ff"
+    );
+
+    // A decoded indefinite container can be re-encoded in the preferred form by clearing the flag,
+    // which is what the documentation on `CborSequence::is_indefinite` says to do
+    let decoded = seabored::de::from_bytes::<Value>(&hex_literal::hex!("9f0102ff"))?;
+    let Value::Sequence(mut seq) = decoded else {
+        unreachable!("expected an indefinite-length array");
+    };
+    assert!(seq.is_indefinite);
+    seq.is_indefinite = false;
+    assert_eq!(
+        Value::Sequence(seq).cbor_serialize()?,
+        hex_literal::hex!("820102")
+    );
+
+    Ok(())
+}
+
+fn unhex(hex: &str) -> Vec<u8> {
+    assert_eq!(hex.len() % 2, 0, "odd-length hex string {hex}");
+    (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
+}
+
+/// RFC 8949 §3: *"A decoder MUST NOT return a decoded data item when it encounters input that is
+/// not a well-formed encoded CBOR data item."* Both entry points must reject these.
+fn assert_not_well_formed(hex: &str) {
+    let bytes = unhex(hex);
+    assert!(
+        seabored::de::from_bytes::<Value>(&bytes).is_err(),
+        "accepted not-well-formed {hex}"
+    );
+    #[cfg(feature = "serde")]
+    assert!(
+        seabored::serde::from_slice::<Value>(&bytes).is_err(),
+        "accepted not-well-formed {hex} through serde"
+    );
+}
+
+/// RFC's well-formedness checklist:
 /// https://www.rfc-editor.org/rfc/rfc8949.html#name-well-formedness-errors-and-
 #[wasm_bindgen_test::wasm_bindgen_test(unsupported = test)]
 fn appendix_f() -> Result<()> {
-    // TODO: Make sense of the RFC because it's a mess
+    // F.1 kind 1: too much data, or a break code outside an indefinite-length item
+    for hex in ["ff", "81ff", "a1ff", "bf00ff"] {
+        assert_not_well_formed(hex);
+    }
+
+    // F.1 kind 2: truncations
+    for hex in [
+        "18",
+        "1901",
+        "1a0102",
+        "1b010203040506",
+        "38",
+        "5801",
+        "7801",
+        "81",
+        "a1",
+        "9f",
+        "bf",
+        "c0",
+    ] {
+        assert_not_well_formed(hex);
+    }
+
+    // F.1 kind 3, subkind 1: reserved additional information
+    for hex in [
+        "1c", "1d", "1e", "3c", "3d", "3e", "5c", "5d", "5e", "7c", "7d", "7e", "9c", "9d", "9e",
+        "bc", "bd", "be", "dc", "dd", "de", "fc", "fd", "fe",
+    ] {
+        assert_not_well_formed(hex);
+    }
+
+    // F.1 kind 3, subkind 2: `f8` followed by a byte below 0x20 — the value fits the initial
+    // byte (or is not a simple value at all), so the two-byte form is not well-formed
+    for hex in ["f800", "f801", "f818", "f81f"] {
+        assert_not_well_formed(hex);
+    }
+
+    // F.1 kind 3, subkind 3: chunks that are not definite-length strings of the same major
+    // type, and indefinite-length strings nested as chunks
+    for hex in [
+        "5f00ff",
+        "5f21ff",
+        "5f6100ff",
+        "5f80ff",
+        "5fa0ff",
+        "5fc000ff",
+        "5fe0ff",
+        "7f4100ff",
+        "5f5f4100ffff",
+        "7f7f6100ffff",
+    ] {
+        assert_not_well_formed(hex);
+    }
+
+    // F.1 kind 3, subkind 4: additional-info 31 on a major type that cannot have one
+    for hex in ["1f", "3f", "df"] {
+        assert_not_well_formed(hex);
+    }
+
+    // The well-formed neighbours of those vectors decode on both entry points
+    for hex in [
+        "e0",       // simple value 0, shortest form
+        "f3",       // simple value 19, shortest form
+        "f820",     // simple value 32, the first value that needs the two-byte form
+        "f8ff",     // simple value 255
+        "f4",       // false
+        "f7",       // undefined
+        "5fff",     // empty indefinite-length byte string
+        "7fff",     // empty indefinite-length text string
+        "5f4100ff", // indefinite-length byte string, one definite chunk
+        "7f6100ff", // indefinite-length text string, one definite chunk
+        "9f00ff",   // indefinite-length array
+        "bf0000ff", // indefinite-length map, one pair
+    ] {
+        let bytes = unhex(hex);
+        assert!(
+            seabored::de::from_bytes::<Value>(&bytes).is_ok(),
+            "rejected well-formed {hex}"
+        );
+        #[cfg(feature = "serde")]
+        assert!(
+            seabored::serde::from_slice::<Value>(&bytes).is_ok(),
+            "rejected well-formed {hex} through serde"
+        );
+    }
+
+    // Simple values the crate can represent round-trip through the encoder
+    for simple in [16u8, 19, 32, 255] {
+        let value = Value::SimpleValue(simple);
+        let encoded = value.cbor_serialize()?;
+        assert_eq!(seabored::de::from_bytes::<Value>(&encoded)?, value);
+    }
+    assert_eq!(
+        Value::SimpleValue(19).cbor_serialize()?,
+        hex_literal::hex!("f3")
+    );
+    assert_eq!(
+        Value::SimpleValue(32).cbor_serialize()?,
+        hex_literal::hex!("f820")
+    );
+    assert_eq!(
+        Value::Bool(false).cbor_serialize()?,
+        hex_literal::hex!("f4")
+    );
+
+    // Encoder side of subkind 2, both entry points: 20..=23 would alias
+    // false/true/null/undefined and 24..=31 are reserved, so neither may be written
+    for simple in [20u8, 21, 22, 23, 24, 31] {
+        assert!(
+            Value::SimpleValue(simple).cbor_serialize().is_err(),
+            "encoded reserved simple value {simple}"
+        );
+        #[cfg(feature = "serde")]
+        assert!(
+            seabored::serde::to_vec(&seabored::serde::SimpleValue(simple)).is_err(),
+            "encoded reserved simple value {simple} through serde"
+        );
+    }
+    #[cfg(feature = "serde")]
+    for simple in [16u8, 19, 32, 255] {
+        let encoded = seabored::serde::to_vec(&seabored::serde::SimpleValue(simple))?;
+        assert_eq!(
+            seabored::de::from_bytes::<Value>(&encoded)?,
+            Value::SimpleValue(simple)
+        );
+    }
+
     Ok(())
 }

@@ -3,12 +3,8 @@ use std::borrow::Cow;
 use crate::{error::SeaboredSerError, ser::CborSerialize};
 use parsio::Write;
 
-/// A raw, pre-encoded CBOR value backed by a byte buffer
-///
-/// The bytes are assumed to be valid CBOR
-///
-/// When serialized via [`CborSerialize`], the bytes are written verbatim into
-/// the output stream without any additional framing
+/// A raw, pre-encoded CBOR value backed by a byte buffer. Bytes are assumed valid; serialization
+/// writes them verbatim, without framing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct RawValue<'a>(Cow<'a, [u8]>);
@@ -76,11 +72,25 @@ impl AsRef<[u8]> for RawValue<'_> {
     }
 }
 
-/// Serializes the raw CBOR bytes verbatim into the CBOR stream.
-///
-/// The seabored CBOR serializer recognises the newtype-struct sentinel name and
-/// writes the bytes directly without any additional framing. Other serializers
-/// will see this as an opaque newtype wrapping `[u8]` and serialize accordingly
+/// Payload for the [`RawValue`] sentinel: a byte string, since the newtype hook hands over an
+/// erased `&T`.
+#[cfg(feature = "serde")]
+#[repr(transparent)]
+pub(crate) struct RawBytes<'a>(pub(crate) &'a [u8]);
+
+#[cfg(feature = "serde")]
+impl ::serde_core::Serialize for RawBytes<'_> {
+    #[inline(always)]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde_core::Serializer,
+    {
+        serializer.serialize_bytes(self.0)
+    }
+}
+
+/// Writes the bytes verbatim; seabored recognizes the sentinel name. Other serializers see an
+/// opaque newtype around a byte string.
 #[cfg(feature = "serde")]
 impl ::serde_core::Serialize for RawValue<'_> {
     #[inline(always)]
@@ -88,7 +98,7 @@ impl ::serde_core::Serialize for RawValue<'_> {
     where
         S: ::serde_core::Serializer,
     {
-        serializer.serialize_newtype_struct(Self::TYP_NAME, self)
+        serializer.serialize_newtype_struct(Self::TYP_NAME, &RawBytes(self.as_bytes()))
     }
 }
 

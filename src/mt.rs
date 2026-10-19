@@ -33,9 +33,7 @@ impl std::fmt::Display for MajorType {
 impl From<InitialByte> for MajorType {
     #[inline(always)]
     fn from(ib: InitialByte) -> Self {
-        // SAFETY: u8::MAX >> 5 results in 7.
-        // And MajorType goes from 0 to 7
-        // so it's impossible for this to be UB
+        // SAFETY: `u8::MAX >> 5 == 7`, and MajorType is 0..=7.
         unsafe { std::mem::transmute(ib.0 >> 5u8) }
     }
 }
@@ -43,11 +41,7 @@ impl From<InitialByte> for MajorType {
 impl From<&crate::types::CborInteger> for MajorType {
     #[inline(always)]
     fn from(value: &crate::types::CborInteger) -> Self {
-        // SAFETY: `negative` is a `bool` flag, and conveniently,
-        // Major types 0 and 1 match to positive and negative ints respectively
-        // Hence this transmute is always safe because:
-        // - when `negative` is true, we end up with the `1u8` value, matching the MajorType::NegativeUint discriminant
-        // - when `negative` is false, we end up with the `0u8` value, matching the MajorType::Uint discriminant
+        // SAFETY: `bool` is 0/1, matching the Uint/NegativeUint discriminants.
         unsafe { std::mem::transmute(value.negative as u8) }
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     ib::{self, InitialByte},
     mt::MajorType,
     serde::TAG,
-    serde::{DYN_TAGGED_TYP_NAME, Deserializer, SimpleValue, parse_tag_from_typ},
+    serde::{DYN_TAGGED_TYP_NAME, Deserializer, SimpleValue, TypeNameTag, parse_tag_from_typ},
 };
 
 use parsio::Read;
@@ -15,10 +15,12 @@ impl ::serde_core::de::Error for SeaboredDeError {
     }
 }
 
-impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'de, R> {
+impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
+    for &'x mut Deserializer<'de, 'a, R>
+{
     type Error = SeaboredDeError;
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -26,7 +28,14 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
         let ib = InitialByte::peek(&mut self.reader)?;
         match ib.mt() {
             MajorType::Uint => self.deserialize_u64(visitor),
-            MajorType::NegativeUint => self.deserialize_i64(visitor),
+            MajorType::NegativeUint => {
+                // Major type 1 reaches down to -2^64; values below i64::MIN go out as i128
+                let value = i128::cbor_deserialize_from(&mut self.reader)?;
+                match i64::try_from(value) {
+                    Ok(value) => visitor.visit_i64(value),
+                    Err(_) => visitor.visit_i128(value),
+                }
+            }
             MajorType::Bytes => self.deserialize_bytes(visitor),
             MajorType::String => self.deserialize_str(visitor),
             MajorType::Array => self.deserialize_seq(visitor),
@@ -237,6 +246,8 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
         self.deserialize_unit(visitor)
     }
 
+    // Not `inline(always)`: inlining at every level overflows the stack on legal 200+ deep
+    // nesting (debug builds).
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn deserialize_newtype_struct<V>(
         self,
@@ -246,44 +257,50 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        // Dyn taagged value accessor (eg: Value::Tagged contained in a struct)
+        // Dynamic tagged accessor (e.g. `Value::Tagged` inside a struct)
         if name == DYN_TAGGED_TYP_NAME {
             return visitor
                 .visit_newtype_struct(&mut DynamicTaggedValueAccessor { parent: &mut *self });
         }
 
-        // SimpleValue special handling
+        // SimpleValue special case
         if name == SimpleValue::TYP_NAME {
             return visitor.visit_newtype_struct(&mut SimpleValueAccessor { parent: &mut *self });
         }
 
-        // Special TaggedValue struct handling
-        // We're going to read the provisional tag from the type name
-        // Then we'll deserialize and check it against the wire data
-        if let Some(expected_tag) = parse_tag_from_typ(name) {
-            // Consume tag and check it
-            let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
-            let (mt, ai) = ib.mt_ai();
-            if mt != MajorType::Tagged {
-                return Err(SeaboredDeError::IncorrectMajorType {
-                    actual: mt,
-                    expected: &[MajorType::Tagged],
-                });
-            }
+        // Tagged: recover the tag from the type name, deserialize, then check the wire tag
+        match parse_tag_from_typ(name) {
+            TypeNameTag::NotOurs => visitor.visit_newtype_struct(self),
+            TypeNameTag::Unparsable => Err(SeaboredDeError::Serde(
+                "unparsable `Tagged` type name: its tag cannot be recovered".into(),
+            )),
+            TypeNameTag::Tag(expected_tag) => {
+                // Consume tag and check it
+                let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+                let (mt, ai) = ib.mt_ai();
+                if mt != MajorType::Tagged {
+                    return Err(SeaboredDeError::IncorrectMajorType {
+                        actual: mt,
+                        expected: &[MajorType::Tagged],
+                    });
+                }
 
-            let tag: u64 = ai.find_subsequent_len(&mut self.reader)?.into();
-            if tag != expected_tag {
-                return Err(SeaboredDeError::WrongTag {
-                    actual: tag,
-                    expected: expected_tag,
-                });
+                let tag: u64 = ai.find_subsequent_len(&mut self.reader)?.into();
+                if tag != expected_tag {
+                    return Err(SeaboredDeError::WrongTag {
+                        actual: tag,
+                        expected: expected_tag,
+                    });
+                }
+
+                // Tag content is one level down
+                let mut child = Deserializer::from_guard(self.reader.enter()?);
+                visitor.visit_newtype_struct(&mut child)
             }
         }
-
-        visitor.visit_newtype_struct(self)
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -305,10 +322,15 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
             Err(e) => return Err(e),
         };
 
-        visitor.visit_seq(SeqAccessor { parent: self, len })
+        // One level deeper for the container body
+        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        visitor.visit_seq(SeqAccessor {
+            parent: &mut child,
+            len,
+        })
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -324,21 +346,39 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
 
         self.reader.advance(1)?;
 
-        // Consume any subsequent length bytes so the reader is positioned at the first element.
-        let len = match ai.find_subsequent_len(&mut self.reader) {
-            Ok(_) => Some(len),
+        // Fixed field count: the wire length must agree, else an unread element lands in the
+        // enclosing struct's next field.
+        let wire_len = match ai.find_subsequent_len(&mut self.reader) {
+            Ok(wire_len) => {
+                let wire_len: usize = wire_len.try_into()?;
+                if wire_len != len {
+                    return Err(SeaboredDeError::WrongLen {
+                        expected: len,
+                        got: wire_len,
+                    });
+                }
+                Some(wire_len)
+            }
+            // Indefinite: count known only at the break, checked below
             Err(SeaboredDeError::IndefiniteLen) => None,
             Err(e) => return Err(e),
         };
-        // if deser_len != len {
-        // FIXME: Verify if that's needed or not?
-        // return Err(SeaboredDeError::Io(std::io::Error::new(
-        //     std::io::ErrorKind::UnexpectedEof,
-        //     format!("Expected {len} elements, CBOR presents {deser_len} elements"),
-        // )));
-        // }
 
-        visitor.visit_seq(SeqAccessor { parent: self, len })
+        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let value = visitor.visit_seq(SeqAccessor {
+            parent: &mut child,
+            len: wire_len,
+        })?;
+
+        // Fields filled: an indefinite array must sit at its break here
+        if wire_len.is_none() {
+            if child.reader.peek_byte()? != ib::consts::IB_BREAK {
+                return Err(SeaboredDeError::TooManyElements { expected: len });
+            }
+            child.reader.advance(1)?;
+        }
+
+        Ok(value)
     }
 
     #[inline(always)]
@@ -354,7 +394,7 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
         self.deserialize_tuple(len, visitor)
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -375,7 +415,11 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
             Err(SeaboredDeError::IndefiniteLen) => None,
             Err(e) => return Err(e),
         };
-        visitor.visit_map(SeqAccessor { parent: self, len })
+        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        visitor.visit_map(SeqAccessor {
+            parent: &mut child,
+            len,
+        })
     }
 
     #[inline(always)]
@@ -402,11 +446,33 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
         V: ::serde_core::de::Visitor<'de>,
     {
         let ib = InitialByte::peek(&mut self.reader)?;
-        if ib.0 == ib::consts::IB_SMALL_MAP | 1 {
-            // Skip the map itself basially, otherwise let everything error out
-            self.reader.advance(1)?;
+        if ib.mt() != MajorType::Map {
+            // A unit variant is a bare string and adds no level
+            return visitor.visit_enum(self);
         }
-        visitor.visit_enum(self)
+
+        let (_, ai) = ib.mt_ai();
+        self.reader.advance(1)?;
+        let len = match ai.find_subsequent_len(&mut self.reader) {
+            Ok(len) => Some(len.try_into()?),
+            Err(SeaboredDeError::IndefiniteLen) => None,
+            Err(e) => return Err(e),
+        };
+        // External tagging is exactly one entry; longer maps would leave pairs behind
+        if let Some(got) = len.filter(|&got| got != 1) {
+            return Err(SeaboredDeError::WrongLen { expected: 1, got });
+        }
+
+        // Variant map adds a level
+        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let value = visitor.visit_enum(&mut child)?;
+        if len.is_none() {
+            if child.reader.peek_byte()? != ib::consts::IB_BREAK {
+                return Err(SeaboredDeError::TooManyElements { expected: 1 });
+            }
+            child.reader.advance(1)?;
+        }
+        Ok(value)
     }
 
     #[inline(always)]
@@ -422,8 +488,8 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        use ::serde_core::Deserialize as _;
-        let _ = crate::Value::deserialize(self)?;
+        // `IgnoredAny` walks the same shapes and bytes as `Value`, without materialising them
+        self.deserialize_any(::serde_core::de::IgnoredAny)?;
         visitor.visit_unit()
     }
 
@@ -433,7 +499,7 @@ impl<'de, R: Read<'de>> ::serde_core::Deserializer<'de> for &mut Deserializer<'d
     }
 }
 
-impl<'de, R: Read<'de>> ::serde_core::de::EnumAccess<'de> for &mut Deserializer<'de, R> {
+impl<'de, 'a, R: Read<'de>> ::serde_core::de::EnumAccess<'de> for &mut Deserializer<'de, 'a, R> {
     type Error = SeaboredDeError;
 
     type Variant = Self;
@@ -448,7 +514,7 @@ impl<'de, R: Read<'de>> ::serde_core::de::EnumAccess<'de> for &mut Deserializer<
     }
 }
 
-impl<'de, R: Read<'de>> ::serde_core::de::VariantAccess<'de> for &mut Deserializer<'de, R> {
+impl<'de, 'a, R: Read<'de>> ::serde_core::de::VariantAccess<'de> for &mut Deserializer<'de, 'a, R> {
     type Error = SeaboredDeError;
 
     #[inline(always)]
@@ -487,16 +553,16 @@ impl<'de, R: Read<'de>> ::serde_core::de::VariantAccess<'de> for &mut Deserializ
     }
 }
 
-pub(crate) struct DynamicTaggedValueAccessor<'a, 'de, R: Read<'de>> {
-    parent: &'a mut Deserializer<'de, R>,
+pub(crate) struct DynamicTaggedValueAccessor<'p, 'de, 'a, R: Read<'de>> {
+    parent: &'p mut Deserializer<'de, 'a, R>,
 }
 
-impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
-    for &mut DynamicTaggedValueAccessor<'a, 'de, R>
+impl<'p, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
+    for &mut DynamicTaggedValueAccessor<'p, 'de, 'a, R>
 {
     type Error = SeaboredDeError;
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -511,12 +577,14 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
             });
         }
 
-        // Cache the tag in the structure, we'll go fetch it on the other side
+        // Cache the tag for the other side
         TAG.set(Some(
             ai.find_subsequent_len(&mut self.parent.reader)?.into(),
         ));
 
-        visitor.visit_newtype_struct(&mut *self.parent)
+        // Tagged content is one level down
+        let mut child = Deserializer::from_guard(self.parent.reader.enter()?);
+        visitor.visit_newtype_struct(&mut child)
     }
 
     ::serde_core::forward_to_deserialize_any! {
@@ -532,16 +600,16 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
     }
 }
 
-struct SimpleValueAccessor<'a, 'de, R: Read<'de>> {
-    parent: &'a mut Deserializer<'de, R>,
+struct SimpleValueAccessor<'p, 'de, 'a, R: Read<'de>> {
+    parent: &'p mut Deserializer<'de, 'a, R>,
 }
 
-impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
-    for &mut SimpleValueAccessor<'a, 'de, R>
+impl<'p, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
+    for &mut SimpleValueAccessor<'p, 'de, 'a, R>
 {
     type Error = SeaboredDeError;
 
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -561,7 +629,16 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
             value @ ib::consts::IB_SIMPLE_VALUE..ib::consts::IB_FALSE => {
                 value - ib::consts::IB_SIMPLE_VALUE
             }
-            ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE => self.parent.reader.read_byte()?,
+            ib::consts::IB_SIMPLE_VALUE_NEXT_BYTE => {
+                // `f8` below 0x20 is not well-formed (RFC 8949 §3.3, Appendix F kind 3 subkind 2)
+                let value = self.parent.reader.read_byte()?;
+                if value < 0x20 {
+                    return Err(SeaboredDeError::NotWellFormed(
+                        "two-byte simple value with an argument below 0x20",
+                    ));
+                }
+                value
+            }
             _ => return Err(SeaboredDeError::ReservedSimpleValue(ib.0)),
         };
 
@@ -581,13 +658,13 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::Deserializer<'de>
     }
 }
 
-struct SeqAccessor<'a, 'de, R: Read<'de>> {
-    parent: &'a mut Deserializer<'de, R>,
+struct SeqAccessor<'p, 'de, 'a, R: Read<'de>> {
+    parent: &'p mut Deserializer<'de, 'a, R>,
     len: Option<usize>,
 }
 
-impl<'a, 'de, R: Read<'de>> SeqAccessor<'a, 'de, R> {
-    #[cfg_attr(feature = "inline-nontrivial", inline)]
+impl<'p, 'de, 'a, R: Read<'de>> SeqAccessor<'p, 'de, 'a, R> {
+    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
     fn deser_from_seed<S: ::serde_core::de::DeserializeSeed<'de>>(
         &mut self,
         seed: S,
@@ -613,7 +690,7 @@ impl<'a, 'de, R: Read<'de>> SeqAccessor<'a, 'de, R> {
     }
 }
 
-impl<'a, 'de, R: Read<'de>> ::serde_core::de::SeqAccess<'de> for SeqAccessor<'a, 'de, R> {
+impl<'p, 'de, 'a, R: Read<'de>> ::serde_core::de::SeqAccess<'de> for SeqAccessor<'p, 'de, 'a, R> {
     type Error = SeaboredDeError;
 
     #[inline(always)]
@@ -626,11 +703,13 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::de::SeqAccess<'de> for SeqAccessor<'a,
 
     #[inline(always)]
     fn size_hint(&self) -> Option<usize> {
+        // Clamp by remaining input: one item needs >= 1 byte (RFC 8949 §10)
         self.len
+            .map(|len| len.min(self.parent.reader.remaining().unwrap_or(len)))
     }
 }
 
-impl<'a, 'de, R: Read<'de>> ::serde_core::de::MapAccess<'de> for SeqAccessor<'a, 'de, R> {
+impl<'p, 'de, 'a, R: Read<'de>> ::serde_core::de::MapAccess<'de> for SeqAccessor<'p, 'de, 'a, R> {
     type Error = SeaboredDeError;
 
     #[inline(always)]
@@ -651,7 +730,9 @@ impl<'a, 'de, R: Read<'de>> ::serde_core::de::MapAccess<'de> for SeqAccessor<'a,
 
     #[inline(always)]
     fn size_hint(&self) -> Option<usize> {
+        // Half the remaining bytes: a map entry is two items
         self.len
+            .map(|len| len.min(self.parent.reader.remaining().unwrap_or(len) / 2))
     }
 }
 
@@ -665,7 +746,7 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test(unsupported = test)]
     fn indefinite_seq_map_struct() {
         let v = crate::serde::from_slice::<IndefiniteSeqMapStruct>(
-            &mut &hex_literal::hex!(
+            &hex_literal::hex!(
                 "BF6474657374781F7468697274792D6F6E657468697274792D6F6E657468697274792D6F6E6531FF"
             )[..],
         )

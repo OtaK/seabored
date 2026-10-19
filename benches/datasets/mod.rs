@@ -5,7 +5,7 @@ pub mod mimi_content_multipart_3;
 pub mod minecraft_savedata;
 pub mod mk48;
 
-pub const SAMPLES: [(&'static str, &'static [u8]); 5] = [
+pub const SAMPLES: [(&str, &[u8]); 5] = [
     (
         mimi_content_multipart_3::ID,
         mimi_content_multipart_3::BYTES,
