@@ -69,6 +69,14 @@ pub enum SeaboredDeError {
     BignumTooLarge(usize),
     #[error("{0} bytes left over after the item was decoded")]
     TrailingBytes(usize),
+    #[error("Missing field: {name}")]
+    MissingField { name: &'static str },
+    #[error("Duplicate field: {name}")]
+    DuplicateField { name: &'static str },
+    #[error("Unexpected key: {key}")]
+    UnexpectedKey { key: String },
+    #[error("Non-preferred encoding: {what}")]
+    NonPreferredEncoding { what: &'static str },
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]

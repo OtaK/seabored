@@ -39,6 +39,124 @@ pub trait CborDeserialize<'cbor> {
         Self: Sized + 'cbor;
 }
 
+/// Skip one well-formed CBOR item without materialising it.
+///
+/// Validates well-formedness (initial-byte widths, string chunks and UTF-8,
+/// container boundaries, tag payloads). It does **not** enforce preferred
+/// encodings: non-shortest arguments are accepted here, so a strict profile
+/// must check the headers it interprets itself.
+#[cfg_attr(feature = "inline-nontrivial", inline)]
+pub fn skip_value<'de, R: Read<'de>>(
+    reader: &mut DepthAwareReaderGuard<'_, 'de, R>,
+) -> Result<(), SeaboredDeError> {
+    let ib = InitialByte::peek(reader)?;
+    if ib.raw() == ib::consts::IB_BREAK {
+        return Err(SeaboredDeError::NotWellFormed("unexpected BREAK"));
+    }
+
+    let (mt, ai) = ib.mt_ai();
+
+    if ai.is_indefinite() {
+        match mt {
+            MajorType::Bytes | MajorType::String => {
+                reader.advance(1)?;
+                let mut nested = reader.enter()?;
+                loop {
+                    let chunk_ib = InitialByte::peek(&mut nested)?;
+                    if chunk_ib.raw() == ib::consts::IB_BREAK {
+                        nested.advance(1)?;
+                        break;
+                    }
+                    chunk_ib.expect_string_chunk(mt)?;
+                    nested.advance(1)?;
+                    let len = chunk_ib.ai().length(&mut nested)?.ok_or(
+                        SeaboredDeError::NotWellFormed(
+                            "indefinite-length chunk inside an indefinite-length string",
+                        ),
+                    )?;
+                    let chunk = nested.read_slice(len.try_into()?)?;
+                    if mt == MajorType::String {
+                        simdutf8::basic::from_utf8(&chunk)?;
+                    }
+                }
+            }
+            MajorType::Array => {
+                reader.advance(1)?;
+                let mut nested = reader.enter()?;
+                loop {
+                    if InitialByte::peek(&mut nested)?.raw() == ib::consts::IB_BREAK {
+                        nested.advance(1)?;
+                        break;
+                    }
+                    skip_value(&mut nested)?;
+                }
+            }
+            MajorType::Map => {
+                reader.advance(1)?;
+                let mut nested = reader.enter()?;
+                loop {
+                    if InitialByte::peek(&mut nested)?.raw() == ib::consts::IB_BREAK {
+                        nested.advance(1)?;
+                        break;
+                    }
+                    skip_value(&mut nested)?;
+                    skip_value(&mut nested)?;
+                }
+            }
+            _ => {
+                return Err(SeaboredDeError::NotWellFormed(
+                    "indefinite length on a major type that has no indefinite form",
+                ));
+            }
+        }
+        return Ok(());
+    }
+
+    reader.advance(1)?;
+    let len = ai.length(reader)?.ok_or(SeaboredDeError::NotWellFormed(
+        "indefinite length reached after the indefinite branch",
+    ))?;
+
+    match mt {
+        MajorType::Uint | MajorType::NegativeUint => Ok(()),
+        MajorType::Bytes | MajorType::String => {
+            let bytes = reader.read_slice(len.try_into()?)?;
+            if mt == MajorType::String {
+                simdutf8::basic::from_utf8(&bytes)?;
+            }
+            Ok(())
+        }
+        MajorType::Array => {
+            let mut nested = reader.enter()?;
+            for _ in 0..len {
+                skip_value(&mut nested)?;
+            }
+            Ok(())
+        }
+        MajorType::Map => {
+            let mut nested = reader.enter()?;
+            for _ in 0..len {
+                skip_value(&mut nested)?;
+                skip_value(&mut nested)?;
+            }
+            Ok(())
+        }
+        MajorType::Tagged => {
+            let mut nested = reader.enter()?;
+            skip_value(&mut nested)
+        }
+        MajorType::SimpleValueOrFloat => {
+            // RFC 8949 §3.3: `f8` with an argument below 0x20 is not well-formed
+            if ai.raw() == 24 && len < 0x20 {
+                return Err(SeaboredDeError::NotWellFormed(
+                    "two-byte simple value with an argument below 0x20",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 impl<'a, T1, T2> CborDeserialize<'a> for (T1, T2)
 where
     T1: CborDeserialize<'a>,

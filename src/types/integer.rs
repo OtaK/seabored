@@ -184,9 +184,26 @@ pub struct CborInteger {
 }
 
 impl CborInteger {
+    /// The unsigned CBOR argument: the value for major type 0, `-1 - value`
+    /// for major type 1. Used by strict-profile header checks.
+    #[inline(always)]
+    pub fn argument(&self) -> u64 {
+        self.value.0
+    }
+
     #[inline(always)]
     fn base_ib(&self) -> u8 {
         (self.negative as u8) << 5u8
+    }
+}
+
+impl std::fmt::Display for CborInteger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.negative {
+            write!(f, "-{}", self.value.0 as u128 + 1)
+        } else {
+            write!(f, "{}", self.value.0)
+        }
     }
 }
 

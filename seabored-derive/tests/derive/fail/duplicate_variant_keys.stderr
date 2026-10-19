@@ -1,0 +1,7 @@
+error: duplicate variant key
+ --> tests/derive/fail/duplicate_variant_keys.rs:3:10
+  |
+3 | #[derive(seabored::CborDeserialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `seabored::CborDeserialize` (in Nightly builds, run with -Z macro-backtrace for more info)

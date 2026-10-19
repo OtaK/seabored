@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 0.2.0 - unreleased
 
-Hardening: recursion limits, bignum decoding, serde sentinel path. No byte changes for valid data;
+Hardening, native derive, recursion limits, bignum decoding, serde sentinel path. No byte changes for valid data;
 every break is a new rejection or removed UB.
 
 ### Added
@@ -15,7 +15,11 @@ every break is a new rejection or removed UB.
 - `Value::into_owned()`: drops the borrow, keeping major type and definiteness.
 - `CborSequence`: `IntoIterator` (owned and `&`), `Extend`, `FromIterator`. `FromIterator` builds definite-length; `Extend` keeps `mt`/`is_indefinite`.
 - Depth limit (256, `parsio::DepthAwareReader::DEFAULT_LIMIT`) on both paths: `de::from_bytes(_with_limit)`, `serde::from_slice_with_limit` / `from_reader_with_limit`, `serde::from_slice_complete` / `from_reader_complete` (exactly one item), `serde::Deserializer::{depth, limit, remaining}`.
-- `SeaboredDeError::{TrailingBytes(usize), BignumTooLarge(usize)}`.
+- `SeaboredDeError::{TrailingBytes(usize), BignumTooLarge(usize), MissingField, DuplicateField, UnexpectedKey, NonPreferredEncoding}`.
+- Native derive behind the `derive` feature: `CborSerialize` / `CborDeserialize` on structs and enums, with `#[cbor(key, tag, simple_value, with, default, skip, indefinite, profile, map, array)]`. Profiles `rfc` (default), `pref-plus`, and `deterministic`; deterministic output sorts map keys by encoded bytes and strict decode enforces/validates them.
+- `InitialByte::raw`, `AdditionalInfo::{raw, is_indefinite, length, is_shortest}`, `ser::write_preamble`, and `de::skip_value` (depth-aware well-formedness skip).
+- `CborSimpleValue`, plus `CborInteger::{argument, Display}`.
+- Native impls for `String`, `Cow<str>`/`Cow<[u8]>` serialize, `Vec<T>`, `BTreeSet<T>`, `HashSet<T>`, `Option<T>` (null only), and `Box<T>`; `Vec<u8>` stays an array, byte strings use `Cow<[u8]>`.
 - Integer decoders accept every argument width for a value the target holds (RFC 8949 §4.1, §5.5): `19 007f` decodes as `127` in an `i8`.
 - Tests: Appendix F.1 kinds 1–3 on both paths plus well-formed counterexamples; depth limit; bignum lengths; argument widths; allocation bounds; indefinite strings; `OwnedValue`; simple values and tags; tuple length.
 

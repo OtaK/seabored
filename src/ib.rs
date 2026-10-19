@@ -96,6 +96,12 @@ impl std::ops::Deref for InitialByte {
 }
 
 impl InitialByte {
+    /// The raw initial byte, for public BREAK and value comparisons.
+    #[inline(always)]
+    pub fn raw(self) -> u8 {
+        self.0
+    }
+
     #[inline(always)]
     pub fn mt(&self) -> MajorType {
         MajorType::from(*self)
@@ -135,6 +141,54 @@ impl InitialByte {
 pub struct AdditionalInfo(pub(crate) u8);
 
 impl AdditionalInfo {
+    /// The raw additional-information value (0..=31).
+    #[inline(always)]
+    pub fn raw(self) -> u8 {
+        self.0
+    }
+
+    /// True for the indefinite-length marker (ai 31).
+    #[inline(always)]
+    pub fn is_indefinite(self) -> bool {
+        self.0 == 31
+    }
+
+    /// Read this additional-information argument.
+    ///
+    /// Inline arguments (ai 0..=23) return `Some(ai)`. Widths 24..=27 read the
+    /// big-endian argument and return it. Width 31 returns `None`; ai 28..=30
+    /// error. ai 31 is only well-formed for bytes, strings, arrays, and maps;
+    /// callers must check the major type.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn length<'data, R: Read<'data>>(
+        self,
+        reader: &mut R,
+    ) -> Result<Option<u64>, SeaboredDeError> {
+        Ok(match self.action()? {
+            AdditionalInfoAction::DoNothing => Some(self.0 as u64),
+            AdditionalInfoAction::Uint8 => Some(reader.read_byte()? as u64),
+            AdditionalInfoAction::Uint16 => Some(reader.read_be_u16()? as u64),
+            AdditionalInfoAction::Uint32 => Some(reader.read_be_u32()? as u64),
+            AdditionalInfoAction::Uint64 => Some(reader.read_be_u64()?),
+            AdditionalInfoAction::IndefiniteLenSeq => None,
+        })
+    }
+
+    /// Was `value` written in the shortest argument form for this ai?
+    ///
+    /// ai 31 has no definite form and always answers `false`.
+    #[inline(always)]
+    pub fn is_shortest(self, value: u64) -> bool {
+        match self.0 {
+            0..=23 => value == self.0 as u64,
+            24 => (24..=u8::MAX as u64).contains(&value),
+            25 => (u8::MAX as u64 + 1..=u16::MAX as u64).contains(&value),
+            26 => (u16::MAX as u64 + 1..=u32::MAX as u64).contains(&value),
+            27 => value > u32::MAX as u64,
+            _ => false,
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn action(&self) -> Result<AdditionalInfoAction, SeaboredDeError> {
         Ok(match self.0 {

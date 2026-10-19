@@ -21,12 +21,13 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: check
+          args: --workspace --all-features
 
       - name: Run cargo check (WASM)
         uses: actions-rs/cargo@v1
         with:
           command: check
-          args: --target=wasm32-unknown-unknown
+          args: --package seabored --all-features --target=wasm32-unknown-unknown
 
   test:
     name: Test Suite
@@ -46,7 +47,19 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all-features
+          args: --workspace --all-features
+
+      - name: Run cargo test (derive only)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --package seabored --no-default-features --features derive
+
+      - name: Run cargo test (serde only)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --package seabored --no-default-features --features serde
 
   lints:
     name: Lints
@@ -73,4 +86,12 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-features --all-targets -- -D warnings
+          args: --workspace --all-features --all-targets -- -D warnings
+
+      - name: Run rustdoc
+        uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"

@@ -1,0 +1,7 @@
+error: key is only valid on map fields
+ --> tests/derive/fail/key_on_tuple.rs:3:10
+  |
+3 | #[derive(seabored::CborSerialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `seabored::CborSerialize` (in Nightly builds, run with -Z macro-backtrace for more info)

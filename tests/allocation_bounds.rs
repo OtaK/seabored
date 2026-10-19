@@ -115,4 +115,13 @@ fn peak_heap_stays_proportional_to_input() {
     assert!(res.is_ok());
     assert!(native <= 48 * arr.len(), "native: {native} bytes");
     assert!(serde <= 48 * arr.len(), "serde: {serde} bytes");
+
+    // A wire length must not drive preallocation for the native Vec impl either.
+    let (res, peak) = measure(|| seabored::de::from_bytes::<Vec<u8>>(&huge_array));
+    assert!(res.is_err());
+    assert!(
+        peak <= SLACK + PER_BYTE * huge_array.len(),
+        "Vec preallocated {peak} bytes for {} input bytes",
+        huge_array.len()
+    );
 }

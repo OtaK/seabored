@@ -1,0 +1,24 @@
+[package]
+name = "seabored-derive"
+version = "0.2.0-pre.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+description = "Derive macros for seabored's native CBOR traits"
+repository = "https://github.com/OtaK/seabored"
+readme = "README.md"
+include = ["src/**/*", "README.md", "PLAN.md"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.24"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits", "visit"] }
+
+[dev-dependencies]
+seabored = { path = "..", features = ["derive", "serde"] }
+hex-literal = "1"
+trybuild = "1"

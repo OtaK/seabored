@@ -1,3 +1,8 @@
+[workspace]
+members = ["seabored-derive"]
+exclude = ["fuzz"]
+resolver = "3"
+
 [package]
 name = "seabored"
 version = "0.2.0-pre.0"
@@ -16,7 +21,8 @@ authors = ["Mathieu Amiot <amiot.mathieu@gmail.com>"]
 [package.metadata.docs.rs]
 features = [
     "serde",
-    "hazmat"
+    "hazmat",
+    "derive"
 ]
 rustdoc-args = ["--cfg", "docsrs", "--generate-link-to-definition"]
 
@@ -25,7 +31,7 @@ default = ["inline-nontrivial"]
 # Enables inlining on non-trivial functions to increase performance at the cost of code size
 inline-nontrivial = []
 serde = ["dep:serde_core"]
-derive = []
+derive = ["dep:seabored-derive"]
 # Enable dangerous features
 hazmat = []
 
@@ -35,6 +41,7 @@ half = "2"
 parsio = { version = "0.1.0-rc.3", features = ["std"] }
 simdutf8 = "0.1"
 serde_core = { version = "1", optional = true }
+seabored-derive = { path = "seabored-derive", version = "0.2.0-pre.0", optional = true }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

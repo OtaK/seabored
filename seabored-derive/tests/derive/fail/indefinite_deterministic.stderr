@@ -1,0 +1,7 @@
+error: indefinite is forbidden under pref-plus and deterministic
+ --> tests/derive/fail/indefinite_deterministic.rs:3:10
+  |
+3 | #[derive(seabored::CborSerialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `seabored::CborSerialize` (in Nightly builds, run with -Z macro-backtrace for more info)
