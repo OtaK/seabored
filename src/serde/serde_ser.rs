@@ -35,79 +35,79 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
 
     #[inline(always)]
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
         let mut tmp_buf = [0u8; 4];
         let str = v.encode_utf8(&mut tmp_buf);
-        (&*str).cbor_serialize_to(&mut self.writer)
+        (&*str).cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        v.cbor_serialize_to(&mut self.writer)
+        v.cbor_serialize_to_with_profile(&mut self.writer, self.profile)
     }
 
     #[inline(always)]
@@ -156,6 +156,57 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
     where
         T: ?Sized + ::serde_core::Serialize,
     {
+        if name == crate::serde::CHUNKED_STRING_TYP_NAME {
+            let (mt, is_indefinite) = crate::serde::SER_STRING.take().ok_or_else(|| {
+                SeaboredSerError::Serde(
+                    "serialized the `ChunkedString` sentinel without a major type".into(),
+                )
+            })?;
+
+            if self.profile.is_strict() || !is_indefinite {
+                let header = match mt {
+                    MajorType::Bytes => ib::consts::IB_BYTE_STRING_SEQUENCE_START,
+                    MajorType::String => ib::consts::IB_UTF_8_STRING_SEQUENCE_START,
+                    _ => {
+                        return Err(SeaboredSerError::Serde(
+                            "chunked string sentinel with a non-string major type".into(),
+                        ));
+                    }
+                };
+                let mut payload = vec![header];
+                {
+                    let mut serializer =
+                        Serializer::with_profile(&mut payload, crate::profile::Profile::General);
+                    serializer.chunked_string = Some(mt);
+                    value.serialize(&mut serializer)?;
+                }
+                let payload: crate::Value<'_> = crate::de::from_bytes(&payload).map_err(|_| {
+                    SeaboredSerError::Serde("chunked string payload is not one CBOR item".into())
+                })?;
+                let profile = if self.profile.is_strict() {
+                    self.profile
+                } else {
+                    crate::profile::Profile::PreferredPlus
+                };
+                return payload.cbor_serialize_to_with_profile(&mut self.writer, profile);
+            }
+
+            let header = match mt {
+                MajorType::Bytes => ib::consts::IB_BYTE_STRING_SEQUENCE_START,
+                MajorType::String => ib::consts::IB_UTF_8_STRING_SEQUENCE_START,
+                _ => {
+                    return Err(SeaboredSerError::Serde(
+                        "chunked string sentinel with a non-string major type".into(),
+                    ));
+                }
+            };
+            let written = self.writer.write(&[header])?;
+            self.chunked_string = Some(mt);
+            let body = value.serialize(&mut *self);
+            self.chunked_string = None;
+            return Ok(written + body?);
+        }
+
         if name == SimpleValue::TYP_NAME {
             // Not interpreted: the payload travels as a value (see `serialize_simple_value`)
             return value.serialize(&mut VerbatimSerialiser(&mut self.writer));
@@ -163,7 +214,13 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
 
         #[cfg(feature = "hazmat")]
         if name == crate::types::RawValue::TYP_NAME {
-            // Same, except the payload is the bytes themselves: written verbatim, no framing
+            if self.profile.is_strict() {
+                let mut buf = Vec::new();
+                value.serialize(&mut VerbatimSerialiser(&mut buf))?;
+                let raw = crate::types::RawValue::from_slice_unchecked(&buf);
+                return raw.cbor_serialize_to_with_profile(&mut self.writer, self.profile);
+            }
+            // General: the payload is the bytes themselves, written verbatim without framing
             return value.serialize(&mut VerbatimSerialiser(&mut self.writer));
         }
 
@@ -174,6 +231,31 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
                     "serialized the `DynamicTaggedValue` sentinel without a tag".into(),
                 )
             })?;
+
+            // Strict tag 2/3 follows native `Value` encoding: strip leading zeroes and
+            // emit major type 0/1 when the magnitude fits. Buffer the payload (only for
+            // bignum tags, only under a strict profile) so it can be inspected.
+            if (tag == 2 || tag == 3) && self.profile.is_strict() {
+                let mut payload = Vec::new();
+                {
+                    let mut serializer =
+                        Serializer::with_profile(&mut payload, crate::profile::Profile::General);
+                    value.serialize(&mut serializer)?;
+                }
+                let payload: crate::Value<'_> = crate::de::from_bytes(&payload).map_err(|_| {
+                    SeaboredSerError::ProfileUnsupported {
+                        profile: self.profile,
+                        what: "bignum payload",
+                    }
+                })?;
+                let bytes = crate::ser::value_bytes(&payload, self.profile)?;
+                return crate::ser::serialize_bignum_tag(
+                    tag,
+                    &bytes,
+                    &mut self.writer,
+                    self.profile,
+                );
+            }
 
             // Write tag
             let written = CborIntegerValue::from(tag)
@@ -214,23 +296,43 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
         let mut written = CborIntegerValue::from(1u8)
             .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?;
         // key
-        written += variant.cbor_serialize_to(&mut self.writer)?;
+        written += variant.cbor_serialize_to_with_profile(&mut self.writer, self.profile)?;
         // value
         Ok(written + value.serialize(self)?)
     }
 
     #[inline(always)]
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        let sized = len.is_some();
+        if let Some(mt) = self.chunked_string.take() {
+            return Ok(SequenceSerializer {
+                mode: ContainerMode::ChunkedString { mt },
+                written: 0,
+                parent: self,
+            });
+        }
+
+        let strict = self.profile.is_strict();
         let written = if let Some(len) = len {
             CborIntegerValue::from(len)
                 .serialize_complex_mt_preamble(MajorType::Array, &mut self.writer)?
+        } else if strict {
+            0
         } else {
             self.writer.write(&[ib::consts::IB_ARRAY_SEQUENCE_START])?
         };
+        let mode = if len.is_none() && strict {
+            ContainerMode::BufferedSequence {
+                bytes: Vec::new(),
+                count: 0,
+            }
+        } else {
+            ContainerMode::Streaming {
+                sized: len.is_some(),
+            }
+        };
 
         Ok(SequenceSerializer {
-            sized,
+            mode,
             written,
             parent: self,
         })
@@ -242,7 +344,7 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
             .serialize_complex_mt_preamble(MajorType::Array, &mut self.writer)?;
 
         Ok(SequenceSerializer {
-            sized: true,
+            mode: ContainerMode::Streaming { sized: true },
             written,
             parent: self,
         })
@@ -269,12 +371,12 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
         let mut written = CborIntegerValue::from(1u8)
             .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?;
         // key
-        written += variant.cbor_serialize_to(&mut self.writer)?;
+        written += variant.cbor_serialize_to_with_profile(&mut self.writer, self.profile)?;
         // start of tuple list
         written += CborIntegerValue::from(len)
             .serialize_complex_mt_preamble(MajorType::Array, &mut self.writer)?;
         Ok(SequenceSerializer {
-            sized: true,
+            mode: ContainerMode::Streaming { sized: true },
             written,
             parent: self,
         })
@@ -282,16 +384,31 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
 
     #[inline(always)]
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        let sized = len.is_some();
-        let written = if let Some(len) = len {
+        let strict = self.profile.is_strict();
+        let deterministic = self.profile == crate::profile::Profile::Deterministic;
+        let buffer = deterministic || (len.is_none() && strict);
+        let written = if buffer {
+            0
+        } else if let Some(len) = len {
             CborIntegerValue::from(len)
                 .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?
         } else {
             self.writer.write(&[ib::consts::IB_MAP_SEQUENCE_START])?
         };
+        let mode = if buffer {
+            ContainerMode::BufferedMap {
+                entries: Vec::new(),
+                pending_key: None,
+                count: 0,
+            }
+        } else {
+            ContainerMode::Streaming {
+                sized: len.is_some(),
+            }
+        };
 
         Ok(SequenceSerializer {
-            sized,
+            mode,
             written,
             parent: self,
         })
@@ -303,11 +420,23 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
         _name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
+        if self.profile == crate::profile::Profile::Deterministic {
+            return Ok(SequenceSerializer {
+                mode: ContainerMode::BufferedMap {
+                    entries: Vec::new(),
+                    pending_key: None,
+                    count: 0,
+                },
+                written: 0,
+                parent: self,
+            });
+        }
+
         let written = CborIntegerValue::from(len)
             .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?;
 
         Ok(SequenceSerializer {
-            sized: true,
+            mode: ContainerMode::Streaming { sized: true },
             written,
             parent: self,
         })
@@ -325,13 +454,26 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
         let mut written = CborIntegerValue::from(1u8)
             .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?;
         // key
-        written += variant.cbor_serialize_to(&mut self.writer)?;
+        written += variant.cbor_serialize_to_with_profile(&mut self.writer, self.profile)?;
+
+        if self.profile == crate::profile::Profile::Deterministic {
+            return Ok(SequenceSerializer {
+                mode: ContainerMode::BufferedMap {
+                    entries: Vec::new(),
+                    pending_key: None,
+                    count: 0,
+                },
+                written,
+                parent: self,
+            });
+        }
+
         // start of map with field => value
         written += CborIntegerValue::from(len)
             .serialize_complex_mt_preamble(MajorType::Map, &mut self.writer)?;
 
         Ok(SequenceSerializer {
-            sized: true,
+            mode: ContainerMode::Streaming { sized: true },
             written,
             parent: self,
         })
@@ -343,10 +485,72 @@ impl<'a, W: Write> ::serde_core::Serializer for &'a mut Serializer<W> {
     }
 }
 
+enum ContainerMode {
+    Streaming {
+        sized: bool,
+    },
+    BufferedSequence {
+        bytes: Vec<u8>,
+        count: usize,
+    },
+    BufferedMap {
+        entries: Vec<(Vec<u8>, Vec<u8>)>,
+        pending_key: Option<Vec<u8>>,
+        count: usize,
+    },
+    ChunkedString {
+        mt: MajorType,
+    },
+}
+
 pub struct SequenceSerializer<'a, W: Write> {
-    sized: bool,
+    mode: ContainerMode,
     written: usize,
     parent: &'a mut Serializer<W>,
+}
+
+impl<W: Write> SequenceSerializer<'_, W> {
+    fn finish(mut self) -> Result<usize, SeaboredSerError> {
+        match &mut self.mode {
+            ContainerMode::Streaming { sized } => {
+                if !*sized {
+                    self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
+                }
+            }
+            ContainerMode::BufferedSequence { bytes, count } => {
+                let mut written = CborIntegerValue::from(*count)
+                    .serialize_complex_mt_preamble(MajorType::Array, &mut self.parent.writer)?;
+                written += self.parent.writer.write(bytes.as_slice())?;
+                self.written += written;
+            }
+            ContainerMode::ChunkedString { .. } => {
+                self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
+            }
+            ContainerMode::BufferedMap {
+                entries,
+                pending_key,
+                count: _,
+            } => {
+                if pending_key.is_some() {
+                    return Err(SeaboredSerError::Serde(
+                        "map key was serialized without a value".into(),
+                    ));
+                }
+                if self.parent.profile == crate::profile::Profile::Deterministic {
+                    entries.sort_by(|left, right| left.0.cmp(&right.0));
+                }
+
+                let mut written = CborIntegerValue::from(entries.len())
+                    .serialize_complex_mt_preamble(MajorType::Map, &mut self.parent.writer)?;
+                for (key, value) in entries {
+                    written += self.parent.writer.write(key.as_slice())?;
+                    written += self.parent.writer.write(value.as_slice())?;
+                }
+                self.written += written;
+            }
+        }
+        Ok(self.written)
+    }
 }
 
 impl<W: Write> ::serde_core::ser::SerializeSeq for SequenceSerializer<'_, W> {
@@ -358,16 +562,44 @@ impl<W: Write> ::serde_core::ser::SerializeSeq for SequenceSerializer<'_, W> {
     where
         T: ?Sized + ::serde_core::Serialize,
     {
-        self.written += value.serialize(&mut *self.parent)?;
-        Ok(())
+        match &mut self.mode {
+            ContainerMode::Streaming { .. } => {
+                self.written += value.serialize(&mut *self.parent)?;
+                Ok(())
+            }
+            ContainerMode::BufferedSequence { bytes, count } => {
+                let mut serializer = Serializer::with_profile(bytes, self.parent.profile);
+                value.serialize(&mut serializer)?;
+                *count += 1;
+                Ok(())
+            }
+            ContainerMode::ChunkedString { mt } => {
+                let mut buf = Vec::new();
+                {
+                    let mut serializer =
+                        Serializer::with_profile(&mut buf, crate::profile::Profile::General);
+                    value.serialize(&mut serializer)?;
+                }
+                let first = *buf.first().ok_or_else(|| {
+                    SeaboredSerError::Serde("empty chunk in a chunked string".into())
+                })?;
+                if (first >> 5) != (*mt as u8) || (first & 0x1f) == 0x1f {
+                    return Err(SeaboredSerError::Serde(
+                        "chunk is not a definite string of the container's major type".into(),
+                    ));
+                }
+                self.written += self.parent.writer.write(&buf)?;
+                Ok(())
+            }
+            ContainerMode::BufferedMap { .. } => Err(SeaboredSerError::Serde(
+                "sequence element in a buffered map".into(),
+            )),
+        }
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -385,11 +617,8 @@ impl<W: Write> ::serde_core::ser::SerializeTuple for SequenceSerializer<'_, W> {
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -407,11 +636,8 @@ impl<W: Write> ::serde_core::ser::SerializeTupleStruct for SequenceSerializer<'_
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -429,11 +655,8 @@ impl<W: Write> ::serde_core::ser::SerializeTupleVariant for SequenceSerializer<'
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -446,8 +669,34 @@ impl<W: Write> ::serde_core::ser::SerializeMap for SequenceSerializer<'_, W> {
     where
         T: ?Sized + ::serde_core::Serialize,
     {
-        self.written += key.serialize(&mut *self.parent)?;
-        Ok(())
+        match &mut self.mode {
+            ContainerMode::Streaming { .. } => {
+                self.written += key.serialize(&mut *self.parent)?;
+                Ok(())
+            }
+            ContainerMode::BufferedMap {
+                pending_key,
+                entries: _,
+                count: _,
+            } => {
+                if pending_key.is_some() {
+                    return Err(SeaboredSerError::Serde(
+                        "map key was serialized twice".into(),
+                    ));
+                }
+                let mut key_bytes = Vec::new();
+                let mut serializer = Serializer::with_profile(&mut key_bytes, self.parent.profile);
+                key.serialize(&mut serializer)?;
+                *pending_key = Some(key_bytes);
+                Ok(())
+            }
+            ContainerMode::ChunkedString { .. } => Err(SeaboredSerError::Serde(
+                "map key in a chunked string".into(),
+            )),
+            ContainerMode::BufferedSequence { .. } => Err(SeaboredSerError::Serde(
+                "map key in a buffered sequence".into(),
+            )),
+        }
     }
 
     #[inline(always)]
@@ -455,16 +704,39 @@ impl<W: Write> ::serde_core::ser::SerializeMap for SequenceSerializer<'_, W> {
     where
         T: ?Sized + ::serde_core::Serialize,
     {
-        self.written += value.serialize(&mut *self.parent)?;
-        Ok(())
+        match &mut self.mode {
+            ContainerMode::Streaming { .. } => {
+                self.written += value.serialize(&mut *self.parent)?;
+                Ok(())
+            }
+            ContainerMode::BufferedMap {
+                entries,
+                pending_key,
+                count,
+            } => {
+                let key = pending_key.take().ok_or_else(|| {
+                    SeaboredSerError::Serde("map value was serialized without a key".into())
+                })?;
+                let mut value_bytes = Vec::new();
+                let mut serializer =
+                    Serializer::with_profile(&mut value_bytes, self.parent.profile);
+                value.serialize(&mut serializer)?;
+                entries.push((key, value_bytes));
+                *count += 1;
+                Ok(())
+            }
+            ContainerMode::ChunkedString { .. } => Err(SeaboredSerError::Serde(
+                "map value in a chunked string".into(),
+            )),
+            ContainerMode::BufferedSequence { .. } => Err(SeaboredSerError::Serde(
+                "map value in a buffered sequence".into(),
+            )),
+        }
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -477,17 +749,44 @@ impl<W: Write> ::serde_core::ser::SerializeStruct for SequenceSerializer<'_, W> 
     where
         T: ?Sized + ::serde_core::Serialize,
     {
-        self.written += key.cbor_serialize_to(&mut self.parent.writer)?;
-        self.written += value.serialize(&mut *self.parent)?;
-        Ok(())
+        match &mut self.mode {
+            ContainerMode::Streaming { .. } => {
+                self.written += key
+                    .cbor_serialize_to_with_profile(&mut self.parent.writer, self.parent.profile)?;
+                self.written += value.serialize(&mut *self.parent)?;
+                Ok(())
+            }
+            ContainerMode::BufferedMap { entries, .. } => {
+                let mut key_bytes = Vec::new();
+                let mut key_serializer =
+                    Serializer::with_profile(&mut key_bytes, self.parent.profile);
+                key.cbor_serialize_to_with_profile(
+                    &mut key_serializer.writer,
+                    self.parent.profile,
+                )?;
+
+                let mut value_bytes = Vec::new();
+                let mut value_serializer =
+                    Serializer::with_profile(&mut value_bytes, self.parent.profile);
+                value.serialize(&mut value_serializer)?;
+                entries.push((key_bytes, value_bytes));
+                Ok(())
+            }
+            ContainerMode::ChunkedString { .. } => Err(SeaboredSerError::Serde(
+                "struct field in a chunked string".into(),
+            )),
+            ContainerMode::BufferedSequence { bytes, count } => {
+                let mut serializer = Serializer::with_profile(bytes, self.parent.profile);
+                value.serialize(&mut serializer)?;
+                *count += 1;
+                Ok(())
+            }
+        }
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 
@@ -500,17 +799,44 @@ impl<W: Write> ::serde_core::ser::SerializeStructVariant for SequenceSerializer<
     where
         T: ?Sized + ::serde_core::Serialize,
     {
-        self.written += key.cbor_serialize_to(&mut self.parent.writer)?;
-        self.written += value.serialize(&mut *self.parent)?;
-        Ok(())
+        match &mut self.mode {
+            ContainerMode::Streaming { .. } => {
+                self.written += key
+                    .cbor_serialize_to_with_profile(&mut self.parent.writer, self.parent.profile)?;
+                self.written += value.serialize(&mut *self.parent)?;
+                Ok(())
+            }
+            ContainerMode::BufferedMap { entries, .. } => {
+                let mut key_bytes = Vec::new();
+                let mut key_serializer =
+                    Serializer::with_profile(&mut key_bytes, self.parent.profile);
+                key.cbor_serialize_to_with_profile(
+                    &mut key_serializer.writer,
+                    self.parent.profile,
+                )?;
+
+                let mut value_bytes = Vec::new();
+                let mut value_serializer =
+                    Serializer::with_profile(&mut value_bytes, self.parent.profile);
+                value.serialize(&mut value_serializer)?;
+                entries.push((key_bytes, value_bytes));
+                Ok(())
+            }
+            ContainerMode::ChunkedString { .. } => Err(SeaboredSerError::Serde(
+                "struct variant field in a chunked string".into(),
+            )),
+            ContainerMode::BufferedSequence { bytes, count } => {
+                let mut serializer = Serializer::with_profile(bytes, self.parent.profile);
+                value.serialize(&mut serializer)?;
+                *count += 1;
+                Ok(())
+            }
+        }
     }
 
     #[inline(always)]
-    fn end(mut self) -> Result<Self::Ok, Self::Error> {
-        if !self.sized {
-            self.written += self.parent.writer.write(&[ib::consts::IB_BREAK])?;
-        }
-        Ok(self.written)
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.finish()
     }
 }
 

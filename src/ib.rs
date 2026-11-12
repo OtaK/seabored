@@ -1,6 +1,6 @@
 use crate::{
     de::CborDeserialize, error::SeaboredDeError, io::ReadExt as _, mt::MajorType,
-    types::CborIntegerValue,
+    profile::DecodeOptions, types::CborIntegerValue,
 };
 use parsio::{DepthAwareReaderGuard, Read};
 
@@ -79,8 +79,9 @@ impl From<MajorType> for InitialByte {
 
 impl<'a> CborDeserialize<'a> for InitialByte {
     #[inline(always)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        _options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         reader.read_byte().map(InitialByte).map_err(Into::into)
     }
@@ -187,6 +188,53 @@ impl AdditionalInfo {
             27 => value > u32::MAX as u64,
             _ => false,
         }
+    }
+
+    /// Reject a non-shortest argument when a checking decoder was requested.
+    ///
+    /// Non-checking decoders accept non-preferred input (draft-09 §4.2).
+    #[allow(dead_code)] // Phase 3 wires this into the profile-aware decoders.
+    #[inline(always)]
+    pub(crate) fn ensure_shortest(
+        self,
+        value: u64,
+        options: DecodeOptions,
+        what: &'static str,
+    ) -> Result<(), SeaboredDeError> {
+        if options.is_checking() && !self.is_shortest(value) {
+            return Err(SeaboredDeError::NonPreferredEncoding { what });
+        }
+
+        Ok(())
+    }
+
+    /// Reject an indefinite-length argument when a checking decoder was requested.
+    #[allow(dead_code)] // Phase 3 wires this into the profile-aware decoders.
+    #[inline(always)]
+    pub(crate) fn ensure_finite_length(
+        self,
+        options: DecodeOptions,
+        what: &'static str,
+    ) -> Result<(), SeaboredDeError> {
+        if options.is_checking() && self.is_indefinite() {
+            return Err(SeaboredDeError::NonPreferredEncoding { what });
+        }
+
+        Ok(())
+    }
+
+    /// Reject an indefinite-length string when a checking decoder was requested.
+    ///
+    /// This is the string-specific form of [`ensure_finite_length`](Self::ensure_finite_length);
+    /// callers use it where the major type is already known to be bytes or text.
+    #[allow(dead_code)] // Phase 3 wires this into the profile-aware decoders.
+    #[inline(always)]
+    pub(crate) fn ensure_definite_string(
+        self,
+        options: DecodeOptions,
+        what: &'static str,
+    ) -> Result<(), SeaboredDeError> {
+        self.ensure_finite_length(options, what)
     }
 
     #[inline(always)]

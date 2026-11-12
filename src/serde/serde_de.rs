@@ -30,7 +30,8 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
             MajorType::Uint => self.deserialize_u64(visitor),
             MajorType::NegativeUint => {
                 // Major type 1 reaches down to -2^64; values below i64::MIN go out as i128
-                let value = i128::cbor_deserialize_from(&mut self.reader)?;
+                let value =
+                    i128::cbor_deserialize_from_with_profile(&mut self.reader, self.options)?;
                 match i64::try_from(value) {
                     Ok(value) => visitor.visit_i64(value),
                     Err(_) => visitor.visit_i128(value),
@@ -57,7 +58,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_bool(bool::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_bool(bool::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -65,7 +69,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_i8(i8::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_i8(i8::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -73,7 +80,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_i16(i16::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_i16(i16::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -81,7 +91,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_i32(i32::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_i32(i32::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -89,7 +102,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_i64(i64::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_i64(i64::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -97,7 +113,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_i128(i128::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_i128(i128::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -105,7 +124,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_u8(u8::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_u8(u8::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -113,7 +135,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_u16(u16::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_u16(u16::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -121,7 +146,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_u32(u32::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_u32(u32::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -129,7 +157,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_u64(u64::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_u64(u64::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -137,7 +168,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_u128(u128::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_u128(u128::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -145,7 +179,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_f32(f32::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_f32(f32::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -153,7 +190,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        visitor.visit_f64(f64::cbor_deserialize_from(&mut self.reader)?)
+        visitor.visit_f64(f64::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )?)
     }
 
     #[inline(always)]
@@ -161,7 +201,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        match std::borrow::Cow::<str>::cbor_deserialize_from(&mut self.reader)? {
+        match std::borrow::Cow::<str>::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )? {
             std::borrow::Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
             std::borrow::Cow::Owned(s) => visitor.visit_string(s),
         }
@@ -180,7 +223,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        match std::borrow::Cow::<[u8]>::cbor_deserialize_from(&mut self.reader)? {
+        match std::borrow::Cow::<[u8]>::cbor_deserialize_from_with_profile(
+            &mut self.reader,
+            self.options,
+        )? {
             std::borrow::Cow::Borrowed(buf_ref) => visitor.visit_borrowed_bytes(buf_ref),
             std::borrow::Cow::Owned(buf) => visitor.visit_byte_buf(buf),
         }
@@ -276,7 +322,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
             )),
             TypeNameTag::Tag(expected_tag) => {
                 // Consume tag and check it
-                let ib = InitialByte::cbor_deserialize_from(&mut self.reader)?;
+                let ib = InitialByte::cbor_deserialize_from_with_profile(
+                    &mut self.reader,
+                    self.options,
+                )?;
                 let (mt, ai) = ib.mt_ai();
                 if mt != MajorType::Tagged {
                     return Err(SeaboredDeError::IncorrectMajorType {
@@ -286,6 +335,7 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
                 }
 
                 let tag: u64 = ai.find_subsequent_len(&mut self.reader)?.into();
+                ai.ensure_shortest(tag, self.options, "tag")?;
                 if tag != expected_tag {
                     return Err(SeaboredDeError::WrongTag {
                         actual: tag,
@@ -294,13 +344,13 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
                 }
 
                 // Tag content is one level down
-                let mut child = Deserializer::from_guard(self.reader.enter()?);
+                let mut child = Deserializer::from_guard(self.reader.enter()?, self.options);
                 visitor.visit_newtype_struct(&mut child)
             }
         }
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
+    #[inline(never)]
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -313,24 +363,29 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
                 expected: &[MajorType::Array],
             });
         }
+        ai.ensure_finite_length(self.options, "array")?;
 
         self.reader.advance(1)?;
 
         let len = match ai.find_subsequent_len(&mut self.reader) {
-            Ok(len) => Some(len.try_into()?),
+            Ok(len) => {
+                let len_u64: u64 = len.into();
+                ai.ensure_shortest(len_u64, self.options, "array length")?;
+                Some(len_u64.try_into()?)
+            }
             Err(SeaboredDeError::IndefiniteLen) => None,
             Err(e) => return Err(e),
         };
 
         // One level deeper for the container body
-        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let mut child = Deserializer::from_guard(self.reader.enter()?, self.options);
         visitor.visit_seq(SeqAccessor {
             parent: &mut child,
             len,
         })
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
+    #[inline(never)]
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -343,6 +398,7 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
                 expected: &[MajorType::Array],
             });
         }
+        ai.ensure_finite_length(self.options, "array")?;
 
         self.reader.advance(1)?;
 
@@ -350,6 +406,8 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
         // enclosing struct's next field.
         let wire_len = match ai.find_subsequent_len(&mut self.reader) {
             Ok(wire_len) => {
+                let wire_len: u64 = wire_len.into();
+                ai.ensure_shortest(wire_len, self.options, "array length")?;
                 let wire_len: usize = wire_len.try_into()?;
                 if wire_len != len {
                     return Err(SeaboredDeError::WrongLen {
@@ -364,7 +422,7 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
             Err(e) => return Err(e),
         };
 
-        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let mut child = Deserializer::from_guard(self.reader.enter()?, self.options);
         let value = visitor.visit_seq(SeqAccessor {
             parent: &mut child,
             len: wire_len,
@@ -394,7 +452,7 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
         self.deserialize_tuple(len, visitor)
     }
 
-    #[cfg_attr(feature = "inline-nontrivial", inline(always))]
+    #[inline(never)]
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: ::serde_core::de::Visitor<'de>,
@@ -407,15 +465,20 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
                 expected: &[MajorType::Map],
             });
         }
+        ai.ensure_finite_length(self.options, "map")?;
 
         self.reader.advance(1)?;
 
         let len = match ai.find_subsequent_len(&mut self.reader) {
-            Ok(len) => Some(len.try_into()?),
+            Ok(len) => {
+                let len_u64: u64 = len.into();
+                ai.ensure_shortest(len_u64, self.options, "map length")?;
+                Some(len_u64.try_into()?)
+            }
             Err(SeaboredDeError::IndefiniteLen) => None,
             Err(e) => return Err(e),
         };
-        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let mut child = Deserializer::from_guard(self.reader.enter()?, self.options);
         visitor.visit_map(SeqAccessor {
             parent: &mut child,
             len,
@@ -452,9 +515,14 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
         }
 
         let (_, ai) = ib.mt_ai();
+        ai.ensure_finite_length(self.options, "map")?;
         self.reader.advance(1)?;
         let len = match ai.find_subsequent_len(&mut self.reader) {
-            Ok(len) => Some(len.try_into()?),
+            Ok(len) => {
+                let len_u64: u64 = len.into();
+                ai.ensure_shortest(len_u64, self.options, "map length")?;
+                Some(len_u64.try_into()?)
+            }
             Err(SeaboredDeError::IndefiniteLen) => None,
             Err(e) => return Err(e),
         };
@@ -464,7 +532,7 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
         }
 
         // Variant map adds a level
-        let mut child = Deserializer::from_guard(self.reader.enter()?);
+        let mut child = Deserializer::from_guard(self.reader.enter()?, self.options);
         let value = visitor.visit_enum(&mut child)?;
         if len.is_none() {
             if child.reader.peek_byte()? != ib::consts::IB_BREAK {
@@ -488,8 +556,10 @@ impl<'x, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
     where
         V: ::serde_core::de::Visitor<'de>,
     {
-        // `IgnoredAny` walks the same shapes and bytes as `Value`, without materialising them
-        self.deserialize_any(::serde_core::de::IgnoredAny)?;
+        // The checked skip scanner consumes the same shapes without materialising them and
+        // applies the profile checks, including bignum payloads (which `IgnoredAny` would
+        // otherwise walk as an opaque tag).
+        crate::de::skip_value_with_options(&mut self.reader, self.options)?;
         visitor.visit_unit()
     }
 
@@ -578,12 +648,20 @@ impl<'p, 'de, 'a, R: Read<'de>> ::serde_core::Deserializer<'de>
         }
 
         // Cache the tag for the other side
-        TAG.set(Some(
-            ai.find_subsequent_len(&mut self.parent.reader)?.into(),
-        ));
+        let tag: u64 = ai.find_subsequent_len(&mut self.parent.reader)?.into();
+        ai.ensure_shortest(tag, self.parent.options, "tag")?;
+        TAG.set(Some(tag));
 
-        // Tagged content is one level down
-        let mut child = Deserializer::from_guard(self.parent.reader.enter()?);
+        // Tagged content is one level down. `Value` reads these options when it turns a
+        // tag 2/3 payload into an integer, so checking applies to streaming decodes too.
+        let options = self.parent.options;
+        let mut child = Deserializer::from_guard(self.parent.reader.enter()?, options);
+        // Only tag 2/3 needs this, and only while checking; the general path stays untouched.
+        let _options = if (tag == 2 || tag == 3) && options.is_checking() {
+            Some(crate::serde::ValueOptionsGuard::new(options))
+        } else {
+            None
+        };
         visitor.visit_newtype_struct(&mut child)
     }
 

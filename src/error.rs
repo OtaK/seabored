@@ -1,6 +1,7 @@
-use crate::mt::MajorType;
+use crate::{mt::MajorType, profile::Profile};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SeaboredSerError {
     #[error(transparent)]
     Parsio(#[from] parsio::WriteError),
@@ -16,6 +17,18 @@ pub enum SeaboredSerError {
     UnexpectedPreambleMajorType(MajorType),
     #[error("SimpleValue {0} cannot be encoded; 20..=31 are not simple values (RFC 8949 §3.3)")]
     ReservedSimpleValue(u8),
+    /// A strict serialization profile was requested, but this encoder cannot honor it.
+    #[error("The {profile:?} serialization profile cannot encode {what}")]
+    ProfileUnsupported {
+        profile: Profile,
+        what: &'static str,
+    },
+    /// A strict serialization profile forbids an indefinite-length item.
+    #[error("Indefinite-length {what} is forbidden under the {profile:?} serialization profile")]
+    IndefiniteForbidden {
+        profile: Profile,
+        what: &'static str,
+    },
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     Serde(String),
@@ -75,8 +88,20 @@ pub enum SeaboredDeError {
     DuplicateField { name: &'static str },
     #[error("Unexpected key: {key}")]
     UnexpectedKey { key: String },
+    /// The input is well-formed but not in the requested profile's preferred form.
+    ///
+    /// `what` names the construct, for example `"integer"`, `"string"`, `"tag"`, `"float"`,
+    /// `"bignum"`, or `"map key order"`.
     #[error("Non-preferred encoding: {what}")]
     NonPreferredEncoding { what: &'static str },
+    /// This entry point cannot carry out the requested profile's checking decode.
+    ///
+    /// Streaming readers cannot validate the complete item; use the slice APIs instead.
+    #[error("The {profile:?} serialization profile cannot decode {what}")]
+    ProfileUnsupported {
+        profile: Profile,
+        what: &'static str,
+    },
     #[error(transparent)]
     IntConversionError(#[from] std::num::TryFromIntError),
     #[cfg(feature = "serde")]

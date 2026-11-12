@@ -1,4 +1,4 @@
-use crate::{ib, mt::MajorType, ser::CborSerialize, types::CborIntegerValue};
+use crate::{ib, mt::MajorType, profile::Profile, ser::CborSerialize, types::CborIntegerValue};
 use parsio::Write;
 
 const MAX_PREALLOC_CAPACITY: usize = 256;
@@ -138,6 +138,40 @@ impl<T: CborSerialize> CborSerialize for CborSequence<T> {
             written += writer.write(&[ib::consts::IB_BREAK])?;
         }
 
+        Ok(written)
+    }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, crate::error::SeaboredSerError> {
+        if !profile.is_strict() {
+            return self.cbor_serialize_to(writer);
+        }
+        if self.is_indefinite {
+            let what = match self.mt {
+                MajorType::Bytes => "byte string",
+                MajorType::String => "text string",
+                MajorType::Array => "array",
+                MajorType::Map => "map",
+                _ => "container",
+            };
+            return Err(crate::error::SeaboredSerError::IndefiniteForbidden { profile, what });
+        }
+        if self.mt == MajorType::Map && profile == Profile::Deterministic {
+            return Err(crate::error::SeaboredSerError::ProfileUnsupported {
+                profile,
+                what: "generic map sequence",
+            });
+        }
+
+        let mut written = CborIntegerValue::from(self.inner.len())
+            .serialize_complex_mt_preamble(self.mt, writer)?;
+        for value in &self.inner {
+            written += value.cbor_serialize_to_with_profile(writer, profile)?;
+        }
         Ok(written)
     }
 }

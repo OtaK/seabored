@@ -24,6 +24,24 @@ enum Profile {
     Deterministic,
 }
 
+fn profile_expr(profile: Profile) -> TokenStream2 {
+    match profile {
+        Profile::Rfc => quote!(::seabored::profile::Profile::General),
+        Profile::PrefPlus => quote!(::seabored::profile::Profile::PreferredPlus),
+        Profile::Deterministic => quote!(::seabored::profile::Profile::Deterministic),
+    }
+}
+
+fn default_decode_options(profile: Profile) -> TokenStream2 {
+    match profile {
+        Profile::Rfc => quote!(::seabored::profile::DecodeOptions::GENERAL),
+        Profile::PrefPlus => quote!(::seabored::profile::DecodeOptions::PREFERRED_PLUS_CHECKED),
+        Profile::Deterministic => {
+            quote!(::seabored::profile::DecodeOptions::DETERMINISTIC_CHECKED)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Key {
     Int(i128),
@@ -614,13 +632,26 @@ fn generate_struct(attrs: &CborAttrs, direction: Direction) -> syn::Result<Token
             let ident = &attrs.ident;
             let generics = serialize_generics(attrs, &fields);
             let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-            let body = encode_body(attrs, form, &fields, profile);
+            let body = encode_body(attrs, form, &fields);
+            let default_profile = profile_expr(profile);
             Ok(quote! {
                 #[automatically_derived]
                 impl #impl_generics ::seabored::ser::CborSerialize for #ident #ty_generics #where_clause {
                     fn cbor_serialize_to<W: ::seabored::reexports::parsio::Write>(
                         &self,
                         writer: &mut W,
+                    ) -> ::core::result::Result<usize, ::seabored::error::SeaboredSerError> {
+                        ::seabored::ser::CborSerialize::cbor_serialize_to_with_profile(
+                            self,
+                            writer,
+                            #default_profile,
+                        )
+                    }
+
+                    fn cbor_serialize_to_with_profile<W: ::seabored::reexports::parsio::Write>(
+                        &self,
+                        writer: &mut W,
+                        profile: ::seabored::profile::Profile,
                     ) -> ::core::result::Result<usize, ::seabored::error::SeaboredSerError> {
                         #body
                     }
@@ -632,43 +663,73 @@ fn generate_struct(attrs: &CborAttrs, direction: Direction) -> syn::Result<Token
             let (impl_generics, de) = deserialize_generics(attrs, &fields);
             let (impl_generics, _, where_clause) = impl_generics.split_for_impl();
             let (_, ty_generics, _) = attrs.generics.split_for_impl();
-            let body = if let Some(tag) = attrs.tag {
-                let check = tag_check(quote!(&mut *reader), tag, &de, profile);
-                let inner = decode_body(
-                    form,
-                    named,
-                    &fields,
-                    quote!(&mut tagged_reader),
-                    &de,
-                    quote!(Self),
-                    profile,
-                );
-                quote!({
-                    #check
-                    ::core::result::Result::Ok(#inner)
-                })
-            } else {
-                let inner = decode_body(
-                    form,
-                    named,
-                    &fields,
-                    quote!(&mut *reader),
-                    &de,
-                    quote!(Self),
-                    profile,
-                );
-                quote!(::core::result::Result::Ok(#inner))
+
+            let make_body = |profile: Profile| {
+                if let Some(tag) = attrs.tag {
+                    let check = tag_check(quote!(&mut *reader), tag, &de, profile);
+                    let inner = decode_body(
+                        form,
+                        named,
+                        &fields,
+                        quote!(&mut tagged_reader),
+                        &de,
+                        quote!(Self),
+                        profile,
+                    );
+                    quote!({
+                        #check
+                        ::core::result::Result::Ok(#inner)
+                    })
+                } else {
+                    let inner = decode_body(
+                        form,
+                        named,
+                        &fields,
+                        quote!(&mut *reader),
+                        &de,
+                        quote!(Self),
+                        profile,
+                    );
+                    quote!(::core::result::Result::Ok(#inner))
+                }
             };
+
+            let general_body = make_body(Profile::Rfc);
+            let preferred_body = make_body(Profile::PrefPlus);
+            let deterministic_body = make_body(Profile::Deterministic);
+            let default_options = default_decode_options(profile);
+
             Ok(quote! {
                 #[automatically_derived]
                 impl #impl_generics ::seabored::de::CborDeserialize<#de> for #ident #ty_generics #where_clause {
+                    fn cbor_deserialize_from_with_profile<R: ::seabored::reexports::parsio::Read<#de>>(
+                        reader: &mut ::seabored::reexports::parsio::DepthAwareReaderGuard<'_, R>,
+                        options: ::seabored::profile::DecodeOptions,
+                    ) -> ::core::result::Result<Self, ::seabored::error::SeaboredDeError>
+                    where
+                        Self: Sized + #de,
+                    {
+                        if !options.is_checking()
+                            || options.profile == ::seabored::profile::Profile::General
+                        {
+                            #general_body
+                        } else if options.profile == ::seabored::profile::Profile::PreferredPlus {
+                            #preferred_body
+                        } else {
+                            #deterministic_body
+                        }
+                    }
+
                     fn cbor_deserialize_from<R: ::seabored::reexports::parsio::Read<#de>>(
                         reader: &mut ::seabored::reexports::parsio::DepthAwareReaderGuard<'_, R>,
                     ) -> ::core::result::Result<Self, ::seabored::error::SeaboredDeError>
                     where
                         Self: Sized + #de,
                     {
-                        #body
+                        ::seabored::de::CborDeserialize::cbor_deserialize_from_with_profile(
+                            reader,
+                            #default_options,
+                        )
                     }
                 }
             })
@@ -688,13 +749,26 @@ fn generate_enum(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenSt
                 variants.iter().flat_map(|variant| variant.fields.iter()),
             );
             let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-            let body = enum_encode_body(attrs, &variants, profile);
+            let body = enum_encode_body(attrs, &variants);
+            let default_profile = profile_expr(profile);
             Ok(quote! {
                 #[automatically_derived]
                 impl #impl_generics ::seabored::ser::CborSerialize for #ident #ty_generics #where_clause {
                     fn cbor_serialize_to<W: ::seabored::reexports::parsio::Write>(
                         &self,
                         writer: &mut W,
+                    ) -> ::core::result::Result<usize, ::seabored::error::SeaboredSerError> {
+                        ::seabored::ser::CborSerialize::cbor_serialize_to_with_profile(
+                            self,
+                            writer,
+                            #default_profile,
+                        )
+                    }
+
+                    fn cbor_serialize_to_with_profile<W: ::seabored::reexports::parsio::Write>(
+                        &self,
+                        writer: &mut W,
+                        profile: ::seabored::profile::Profile,
                     ) -> ::core::result::Result<usize, ::seabored::error::SeaboredSerError> {
                         #body
                     }
@@ -708,26 +782,57 @@ fn generate_enum(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenSt
             );
             let (impl_generics, _, where_clause) = impl_generics.split_for_impl();
             let (_, ty_generics, _) = attrs.generics.split_for_impl();
-            let body = if let Some(tag) = attrs.tag {
-                let check = tag_check(quote!(&mut *reader), tag, &de, profile);
-                let inner = enum_decode_body(&variants, quote!(&mut tagged_reader), &de, profile);
-                quote!({
-                    #check
-                    #inner
-                })
-            } else {
-                enum_decode_body(&variants, quote!(&mut *reader), &de, profile)
+
+            let make_body = |profile: Profile| {
+                if let Some(tag) = attrs.tag {
+                    let check = tag_check(quote!(&mut *reader), tag, &de, profile);
+                    let inner =
+                        enum_decode_body(&variants, quote!(&mut tagged_reader), &de, profile);
+                    quote!({
+                        #check
+                        #inner
+                    })
+                } else {
+                    enum_decode_body(&variants, quote!(&mut *reader), &de, profile)
+                }
             };
+
+            let general_body = make_body(Profile::Rfc);
+            let preferred_body = make_body(Profile::PrefPlus);
+            let deterministic_body = make_body(Profile::Deterministic);
+            let default_options = default_decode_options(profile);
+
             Ok(quote! {
                 #[automatically_derived]
                 impl #impl_generics ::seabored::de::CborDeserialize<#de> for #ident #ty_generics #where_clause {
+                    fn cbor_deserialize_from_with_profile<R: ::seabored::reexports::parsio::Read<#de>>(
+                        reader: &mut ::seabored::reexports::parsio::DepthAwareReaderGuard<'_, R>,
+                        options: ::seabored::profile::DecodeOptions,
+                    ) -> ::core::result::Result<Self, ::seabored::error::SeaboredDeError>
+                    where
+                        Self: Sized + #de,
+                    {
+                        if !options.is_checking()
+                            || options.profile == ::seabored::profile::Profile::General
+                        {
+                            #general_body
+                        } else if options.profile == ::seabored::profile::Profile::PreferredPlus {
+                            #preferred_body
+                        } else {
+                            #deterministic_body
+                        }
+                    }
+
                     fn cbor_deserialize_from<R: ::seabored::reexports::parsio::Read<#de>>(
                         reader: &mut ::seabored::reexports::parsio::DepthAwareReaderGuard<'_, R>,
                     ) -> ::core::result::Result<Self, ::seabored::error::SeaboredDeError>
                     where
                         Self: Sized + #de,
                     {
-                        #body
+                        ::seabored::de::CborDeserialize::cbor_deserialize_from_with_profile(
+                            reader,
+                            #default_options,
+                        )
                     }
                 }
             })
@@ -735,15 +840,11 @@ fn generate_enum(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenSt
     }
 }
 
-fn enum_encode_body(
-    attrs: &CborAttrs,
-    variants: &[VariantInfo<'_>],
-    profile: Profile,
-) -> TokenStream2 {
+fn enum_encode_body(attrs: &CborAttrs, variants: &[VariantInfo<'_>]) -> TokenStream2 {
     let mut branches = Vec::new();
     for variant in variants {
         let (pattern, slots) = variant_pattern(variant);
-        let branch = variant_encode_branch(variant, &slots, profile);
+        let branch = variant_encode_branch(variant, &slots);
         branches.push(quote! {
             #pattern => {
                 #branch
@@ -790,11 +891,7 @@ fn variant_pattern(variant: &VariantInfo<'_>) -> (TokenStream2, Vec<syn::Ident>)
     (pattern, slots)
 }
 
-fn variant_encode_branch(
-    variant: &VariantInfo<'_>,
-    slots: &[syn::Ident],
-    profile: Profile,
-) -> TokenStream2 {
+fn variant_encode_branch(variant: &VariantInfo<'_>, slots: &[syn::Ident]) -> TokenStream2 {
     let key = encode_key(&variant.key);
     let tag = if let Some(tag) = variant.attrs.tag {
         quote! {
@@ -851,27 +948,38 @@ fn variant_encode_branch(
             }
         }
         Form::Map => {
-            let mut entries: Vec<_> = variant
+            let entries: Vec<_> = variant
                 .fields
                 .iter()
                 .zip(slots)
                 .filter(|(field, _)| !field.attrs.skip.is_present())
                 .collect();
-            if profile == Profile::Deterministic {
-                entries.sort_by(|(left, _), (right, _)| {
-                    key_bytes(&left.key()).cmp(&key_bytes(&right.key()))
-                });
-            }
             let count = entries.len();
-            let mut steps = Vec::new();
-            for (field, slot) in entries {
+
+            let mut declared = Vec::new();
+            for (field, slot) in &entries {
                 let field_key = encode_key(&field.key());
                 let value = encode_value_expr(field, quote!(#slot));
-                steps.push(quote! {
+                declared.push(quote! {
                     written += #field_key;
                     written += #value;
                 });
             }
+
+            let mut sorted = entries.clone();
+            sorted.sort_by(|(left, _), (right, _)| {
+                key_bytes(&left.key()).cmp(&key_bytes(&right.key()))
+            });
+            let mut ordered = Vec::new();
+            for (field, slot) in sorted {
+                let field_key = encode_key(&field.key());
+                let value = encode_value_expr(field, quote!(#slot));
+                ordered.push(quote! {
+                    written += #field_key;
+                    written += #value;
+                });
+            }
+
             quote! {
                 written += ::seabored::ser::write_preamble(
                     ::seabored::mt::MajorType::Map,
@@ -885,7 +993,11 @@ fn variant_encode_branch(
                     #count as u64,
                     writer,
                 )?;
-                #(#steps)*
+                if profile == ::seabored::profile::Profile::Deterministic {
+                    #(#ordered)*
+                } else {
+                    #(#declared)*
+                }
             }
         }
     }
@@ -898,7 +1010,6 @@ fn enum_decode_body(
     profile: Profile,
 ) -> TokenStream2 {
     let strict = profile != Profile::Rfc;
-    let deterministic = profile == Profile::Deterministic;
     let mut unit_text_arms = Vec::new();
     let mut unit_int_conditions = Vec::new();
     let mut payload_text_arms = Vec::new();
@@ -1086,7 +1197,7 @@ fn enum_decode_body(
                         },
                     );
                 }
-                ::core::option::Option::None if #deterministic => {
+                ::core::option::Option::None if #strict => {
                     return ::core::result::Result::Err(
                         ::seabored::error::SeaboredDeError::NonPreferredEncoding {
                             what: "map header",
@@ -1238,12 +1349,7 @@ fn int_chain(conditions: Vec<(Literal, TokenStream2)>, fallback: TokenStream2) -
     chain
 }
 
-fn encode_body(
-    attrs: &CborAttrs,
-    form: Form,
-    fields: &[FieldInfo<'_>],
-    profile: Profile,
-) -> TokenStream2 {
+fn encode_body(attrs: &CborAttrs, form: Form, fields: &[FieldInfo<'_>]) -> TokenStream2 {
     let mut steps = Vec::new();
 
     if let Some(tag) = attrs.tag {
@@ -1290,11 +1396,6 @@ fn encode_body(
                 .iter()
                 .filter(|field| !field.attrs.skip.is_present())
                 .collect();
-            let entries = if profile == Profile::Deterministic {
-                sorted_fields(entries)
-            } else {
-                entries
-            };
             let count = entries.len();
             steps.push(quote! {
                 written += ::seabored::ser::write_preamble(
@@ -1303,14 +1404,34 @@ fn encode_body(
                     writer,
                 )?;
             });
-            for field in entries {
+
+            let mut declared = Vec::new();
+            for field in &entries {
                 let key = encode_key(&field.key());
                 let value = encode_value(field);
-                steps.push(quote! {
+                declared.push(quote! {
                     written += #key;
                     written += #value;
                 });
             }
+
+            let mut ordered = Vec::new();
+            for field in sorted_fields(entries) {
+                let key = encode_key(&field.key());
+                let value = encode_value(field);
+                ordered.push(quote! {
+                    written += #key;
+                    written += #value;
+                });
+            }
+
+            steps.push(quote! {
+                if profile == ::seabored::profile::Profile::Deterministic {
+                    #(#ordered)*
+                } else {
+                    #(#declared)*
+                }
+            });
         }
     }
 
@@ -1326,15 +1447,20 @@ fn encode_key(key: &Key) -> TokenStream2 {
         Key::Text(text) => {
             let text = LitStr::new(text, Span::call_site());
             quote! {
-                <&str as ::seabored::ser::CborSerialize>::cbor_serialize_to(&#text, writer)?
+                <&str as ::seabored::ser::CborSerialize>::cbor_serialize_to_with_profile(
+                    &#text,
+                    writer,
+                    profile,
+                )?
             }
         }
         Key::Int(value) => {
             let literal = int_literal(*value);
             quote! {
-                <::seabored::types::CborInteger as ::seabored::ser::CborSerialize>::cbor_serialize_to(
+                <::seabored::types::CborInteger as ::seabored::ser::CborSerialize>::cbor_serialize_to_with_profile(
                     &::seabored::types::CborInteger::from(#literal),
                     writer,
+                    profile,
                 )?
             }
         }
@@ -1348,22 +1474,37 @@ fn encode_value(field: &FieldInfo<'_>) -> TokenStream2 {
 
 fn encode_value_expr(field: &FieldInfo<'_>, expr: TokenStream2) -> TokenStream2 {
     let inner = if let Some(path) = &field.attrs.with {
-        quote!(#path::cbor_serialize_to(#expr, writer)?)
+        quote! {
+            #path::cbor_serialize_to_with_profile(#expr, writer, profile)?
+        }
     } else if field.attrs.simple_value.is_present() {
         quote! {
-            <::seabored::types::CborSimpleValue as ::seabored::ser::CborSerialize>::cbor_serialize_to(
+            <::seabored::types::CborSimpleValue as ::seabored::ser::CborSerialize>::cbor_serialize_to_with_profile(
                 &::seabored::types::CborSimpleValue(*#expr),
                 writer,
+                profile,
             )?
         }
     } else if field.attrs.indefinite.is_present() {
         quote! {{
+            if profile.is_strict() {
+                return ::core::result::Result::Err(
+                    ::seabored::error::SeaboredSerError::IndefiniteForbidden {
+                        profile,
+                        what: "indefinite field",
+                    },
+                );
+            }
             let mut n = ::seabored::reexports::parsio::Write::write(
                 writer,
                 &[::seabored::ib::consts::IB_ARRAY_SEQUENCE_START],
             )?;
             for item in #expr {
-                n += ::seabored::ser::CborSerialize::cbor_serialize_to(item, writer)?;
+                n += ::seabored::ser::CborSerialize::cbor_serialize_to_with_profile(
+                    item,
+                    writer,
+                    profile,
+                )?;
             }
             n += ::seabored::reexports::parsio::Write::write(
                 writer,
@@ -1373,7 +1514,11 @@ fn encode_value_expr(field: &FieldInfo<'_>, expr: TokenStream2) -> TokenStream2 
         }}
     } else {
         quote! {
-            ::seabored::ser::CborSerialize::cbor_serialize_to(#expr, writer)?
+            ::seabored::ser::CborSerialize::cbor_serialize_to_with_profile(
+                #expr,
+                writer,
+                profile,
+            )?
         }
     };
 
@@ -1489,7 +1634,6 @@ fn decode_header(
     what: &'static str,
 ) -> TokenStream2 {
     let strict = profile != Profile::Rfc;
-    let deterministic = profile == Profile::Deterministic;
     quote! {
         let ib = <::seabored::ib::InitialByte as ::seabored::de::CborDeserialize<#de>>::cbor_deserialize_from(#reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -1509,7 +1653,7 @@ fn decode_header(
                         ::seabored::error::SeaboredDeError::NonPreferredEncoding { what: #what },
                     );
                 }
-                ::core::option::Option::None if #deterministic => {
+                ::core::option::Option::None if #strict => {
                     return ::core::result::Result::Err(
                         ::seabored::error::SeaboredDeError::NonPreferredEncoding { what: #what },
                     );
@@ -1757,7 +1901,7 @@ fn decode_map(
         }
     } else {
         quote! {
-            ::seabored::de::skip_value(&mut map_reader)?;
+            ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
         }
     };
 
@@ -1771,7 +1915,7 @@ fn decode_map(
         }
     } else {
         quote! {
-            ::seabored::de::skip_value(&mut map_reader)?;
+            ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
         }
     };
 
@@ -1783,8 +1927,8 @@ fn decode_map(
             }
         } else {
             quote! {
-                ::seabored::de::skip_value(&mut map_reader)?;
-                ::seabored::de::skip_value(&mut map_reader)?;
+                ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
+                ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
             }
         }
     } else {
@@ -1806,8 +1950,8 @@ fn decode_map(
             }
         } else {
             quote! {
-                ::seabored::de::skip_value(&mut map_reader)?;
-                ::seabored::de::skip_value(&mut map_reader)?;
+                ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
+                ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
             }
         }
     } else {
@@ -1873,8 +2017,8 @@ fn decode_map(
         }
     } else {
         quote! {
-            ::seabored::de::skip_value(&mut map_reader)?;
-            ::seabored::de::skip_value(&mut map_reader)?;
+            ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
+            ::seabored::de::skip_value_with_options(&mut map_reader, options)?;
         }
     };
 
@@ -1941,15 +2085,15 @@ fn decode_value(
 
 fn decode_value_inner(field: &FieldInfo<'_>, reader: TokenStream2, de: &Lifetime) -> TokenStream2 {
     if let Some(path) = &field.attrs.with {
-        quote!(#path::cbor_deserialize_from(#reader)?)
+        quote!(#path::cbor_deserialize_from_with_profile(#reader, options)?)
     } else if field.attrs.simple_value.is_present() {
         quote! {
-            <::seabored::types::CborSimpleValue as ::seabored::de::CborDeserialize<#de>>::cbor_deserialize_from(#reader)?.0
+            <::seabored::types::CborSimpleValue as ::seabored::de::CborDeserialize<#de>>::cbor_deserialize_from_with_profile(#reader, options)?.0
         }
     } else {
         let ty = field.ty;
         quote! {
-            <#ty as ::seabored::de::CborDeserialize<#de>>::cbor_deserialize_from(#reader)?
+            <#ty as ::seabored::de::CborDeserialize<#de>>::cbor_deserialize_from_with_profile(#reader, options)?
         }
     }
 }

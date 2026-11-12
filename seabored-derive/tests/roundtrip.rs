@@ -169,18 +169,21 @@ mod custom {
     use seabored::error::{SeaboredDeError, SeaboredSerError};
     use seabored::reexports::parsio::{DepthAwareReaderGuard, Read, Write};
     use seabored::ser::CborSerialize as _;
+    use seabored::{DecodeOptions, Profile};
 
-    pub fn cbor_serialize_to<W: Write>(
+    pub fn cbor_serialize_to_with_profile<W: Write>(
         value: &u32,
         writer: &mut W,
+        profile: Profile,
     ) -> Result<usize, SeaboredSerError> {
-        value.cbor_serialize_to(writer)
+        value.cbor_serialize_to_with_profile(writer, profile)
     }
 
-    pub fn cbor_deserialize_from<'de, R: Read<'de>>(
+    pub fn cbor_deserialize_from_with_profile<'de, R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<u32, SeaboredDeError> {
-        u32::cbor_deserialize_from(reader)
+        u32::cbor_deserialize_from_with_profile(reader, options)
     }
 }
 

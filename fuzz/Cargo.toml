@@ -28,3 +28,10 @@ path = "fuzz_targets/serde.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "checking"
+path = "fuzz_targets/checking.rs"
+test = false
+doc = false
+bench = false

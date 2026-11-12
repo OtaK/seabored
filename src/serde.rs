@@ -1,4 +1,7 @@
-use crate::error::SeaboredDeError;
+use crate::{
+    error::SeaboredDeError,
+    profile::{DecodeOptions, Profile},
+};
 use parsio::{DepthAwareReader, DepthAwareReaderGuard, Read, Write};
 
 // Lil hack to pass over the serde fence
@@ -6,6 +9,71 @@ thread_local! {
     pub(crate) static TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
     /// Tag of the value being serialized, handed over by [`serialize_tagged`]
     pub(crate) static SER_TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// Options of the deserializer currently handing a dynamic tag to `Value`.
+    static VALUE_OPTIONS: std::cell::Cell<Option<DecodeOptions>> = const { std::cell::Cell::new(None) };
+    /// Major type and form of the chunked `Value` string being serialized.
+    static SER_STRING: std::cell::Cell<Option<(crate::mt::MajorType, bool)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) const CHUNKED_STRING_TYP_NAME: &str = "seabored::serde::ChunkedString";
+
+/// Payload for [`CHUNKED_STRING_TYP_NAME`]: the string chunks, serialized as a sequence.
+pub(crate) struct ChunkedValue<'a, 'b>(pub(crate) &'b crate::types::CborSequence<crate::Value<'a>>);
+
+impl ::serde_core::Serialize for ChunkedValue<'_, '_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde_core::Serializer,
+    {
+        use ::serde_core::ser::SerializeSeq as _;
+
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for chunk in self.0.iter() {
+            seq.serialize_element(chunk)?;
+        }
+        seq.end()
+    }
+}
+
+/// Serializes a `Value::Sequence` whose major type is Bytes or String as one CBOR string.
+///
+/// General serialization keeps an indefinite chunked string as chunks; strict profiles and
+/// finite chunk sequences concatenate into one definite string. Foreign serializers see a
+/// newtype around the chunk sequence.
+pub(crate) fn serialize_chunked_string<'a, S>(
+    serializer: S,
+    chunks: &crate::types::CborSequence<crate::Value<'a>>,
+) -> Result<S::Ok, S::Error>
+where
+    S: ::serde_core::Serializer,
+{
+    SER_STRING.set(Some((chunks.mt, chunks.is_indefinite)));
+    let result =
+        serializer.serialize_newtype_struct(CHUNKED_STRING_TYP_NAME, &ChunkedValue(chunks));
+    SER_STRING.set(None);
+    result
+}
+
+/// Restores [`VALUE_OPTIONS`] when the dynamic-tag accessor returns.
+pub(crate) struct ValueOptionsGuard(Option<DecodeOptions>);
+
+impl ValueOptionsGuard {
+    pub(crate) fn new(options: DecodeOptions) -> Self {
+        let previous = VALUE_OPTIONS.with(std::cell::Cell::get);
+        VALUE_OPTIONS.with(|cell| cell.set(Some(options)));
+        Self(previous)
+    }
+}
+
+impl Drop for ValueOptionsGuard {
+    fn drop(&mut self) {
+        VALUE_OPTIONS.with(|cell| cell.set(self.0));
+    }
+}
+
+pub(crate) fn value_options() -> Option<DecodeOptions> {
+    VALUE_OPTIONS.with(std::cell::Cell::get)
 }
 
 /// Serializes `value` as a CBOR simple value, handing the `u8` over as the sentinel payload
@@ -39,24 +107,39 @@ mod serde_ser;
 pub struct Deserializer<'de, 'a, R: Read<'de>> {
     reader: DepthAwareReaderGuard<'a, R>,
     _lifetime: std::marker::PhantomData<&'de ()>,
+    options: DecodeOptions,
 }
 
 impl<'de, 'a, R: Read<'de>> Deserializer<'de, 'a, R> {
     /// Wraps `reader`, entering level 1; errors on depth overflow.
     #[inline]
     pub fn new(reader: &'a mut DepthAwareReader<R>) -> Result<Self, SeaboredDeError> {
+        Self::new_with_options(reader, DecodeOptions::GENERAL)
+    }
+
+    /// Wraps `reader` with explicit decoding options.
+    ///
+    /// The streaming deserializer applies container/value checks as it goes. Deterministic map
+    /// order is enforced by [`from_slice_with_options`], which validates the complete item first.
+    #[inline]
+    pub fn new_with_options(
+        reader: &'a mut DepthAwareReader<R>,
+        options: DecodeOptions,
+    ) -> Result<Self, SeaboredDeError> {
         Ok(Self {
             reader: reader.enter()?,
             _lifetime: std::marker::PhantomData,
+            options,
         })
     }
 
     /// Wraps an already-entered guard. Used to descend one level per container.
     #[inline]
-    pub(crate) fn from_guard(reader: DepthAwareReaderGuard<'a, R>) -> Self {
+    pub(crate) fn from_guard(reader: DepthAwareReaderGuard<'a, R>, options: DecodeOptions) -> Self {
         Self {
             reader,
             _lifetime: std::marker::PhantomData,
+            options,
         }
     }
 
@@ -81,11 +164,27 @@ impl<'de, 'a, R: Read<'de>> Deserializer<'de, 'a, R> {
 
 pub struct Serializer<W: Write> {
     pub(crate) writer: W,
+    pub(crate) profile: Profile,
+    /// Set while serializing the chunks of a `Value` string; consumed by `serialize_seq`.
+    pub(crate) chunked_string: Option<crate::mt::MajorType>,
 }
 
 impl<W: Write> Serializer<W> {
     pub fn new(writer: W) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            profile: Profile::General,
+            chunked_string: None,
+        }
+    }
+
+    /// Wraps `writer` and encodes with `profile`.
+    pub fn with_profile(writer: W, profile: Profile) -> Self {
+        Self {
+            writer,
+            profile,
+            chunked_string: None,
+        }
     }
 
     pub fn into_inner(self) -> W {
@@ -116,6 +215,82 @@ pub fn from_slice_complete<'de, T: ::serde_core::Deserialize<'de>>(
     buf: &'de [u8],
 ) -> Result<T, crate::error::SeaboredDeError> {
     from_reader_complete(buf)
+}
+
+/// Read from a slice with explicit decoding options.
+///
+/// Checking options validate the complete item as `Value` before deserializing; this enforces
+/// recursive map order and every nested serialization rule for slice inputs.
+#[inline]
+pub fn from_slice_with_options<'de, T: ::serde_core::Deserialize<'de>>(
+    buf: &'de [u8],
+    options: DecodeOptions,
+) -> Result<T, crate::error::SeaboredDeError> {
+    if options.is_checking() {
+        crate::de::from_bytes_with_options::<crate::Value<'_>>(buf, options)?;
+    }
+    from_reader_with_options_inner(buf, options)
+}
+
+/// Read from a slice for `profile`; strict profiles check the complete item first.
+#[inline]
+pub fn from_slice_with_profile<'de, T: ::serde_core::Deserialize<'de>>(
+    buf: &'de [u8],
+    profile: Profile,
+) -> Result<T, crate::error::SeaboredDeError> {
+    from_slice_with_options(
+        buf,
+        DecodeOptions {
+            profile,
+            checking: profile.is_strict(),
+        },
+    )
+}
+
+/// Read from a reader with explicit decoding options.
+///
+/// A checking decoder needs to validate the entire item before deserializing, which a streaming
+/// reader cannot do without buffering. Use [`from_slice_with_options`] for checking decodes.
+#[inline]
+pub fn from_reader_with_options<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+    options: DecodeOptions,
+) -> Result<T, crate::error::SeaboredDeError> {
+    if options.is_checking() {
+        return Err(crate::error::SeaboredDeError::ProfileUnsupported {
+            profile: options.profile,
+            what: "checking serde from_reader",
+        });
+    }
+    from_reader_with_options_inner(reader, options)
+}
+
+/// Read from a streaming reader for `profile`.
+///
+/// Strict profiles need to validate the complete item first, so this returns
+/// [`crate::error::SeaboredDeError::ProfileUnsupported`]; use [`from_slice_with_profile`].
+#[inline]
+pub fn from_reader_with_profile<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+    profile: Profile,
+) -> Result<T, crate::error::SeaboredDeError> {
+    from_reader_with_options(
+        reader,
+        DecodeOptions {
+            profile,
+            checking: profile.is_strict(),
+        },
+    )
+}
+
+#[inline]
+fn from_reader_with_options_inner<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
+    reader: R,
+    options: DecodeOptions,
+) -> Result<T, crate::error::SeaboredDeError> {
+    let mut reader = DepthAwareReader::from_reader(reader);
+    let mut deserializer = Deserializer::new_with_options(&mut reader, options)?;
+    ::serde_core::Deserialize::deserialize(&mut deserializer)
 }
 
 #[inline(always)]
@@ -168,6 +343,17 @@ pub fn to_writer<W: Write, T: ::serde_core::Serialize>(
     value.serialize(&mut serializer)
 }
 
+/// Serialize a data structure to a writer using an explicit serialization profile.
+#[inline(always)]
+pub fn to_writer_with_profile<W: Write, T: ::serde_core::Serialize>(
+    writer: &mut W,
+    value: &T,
+    profile: Profile,
+) -> Result<usize, crate::error::SeaboredSerError> {
+    let mut serializer = Serializer::with_profile(writer, profile);
+    value.serialize(&mut serializer)
+}
+
 #[inline(always)]
 /// Serialize a data structure to a Vec
 pub fn to_vec<T: ::serde_core::Serialize>(
@@ -175,6 +361,18 @@ pub fn to_vec<T: ::serde_core::Serialize>(
 ) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
     let mut buf = vec![];
     let written = to_writer(&mut buf, value)?;
+    debug_assert_eq!(written, buf.len());
+    Ok(buf)
+}
+
+/// Serialize a data structure to a Vec using an explicit serialization profile.
+#[inline(always)]
+pub fn to_vec_with_profile<T: ::serde_core::Serialize>(
+    value: &T,
+    profile: Profile,
+) -> Result<Vec<u8>, crate::error::SeaboredSerError> {
+    let mut buf = vec![];
+    let written = to_writer_with_profile(&mut buf, value, profile)?;
     debug_assert_eq!(written, buf.len());
     Ok(buf)
 }
@@ -536,6 +734,7 @@ mod tests {
             }
         }
 
+        #[allow(unused_mut)]
         let mut names = vec!["seabored::serde::SimpleValue", super::DYN_TAGGED_TYP_NAME];
         #[cfg(feature = "hazmat")]
         names.push(crate::types::RawValue::TYP_NAME);

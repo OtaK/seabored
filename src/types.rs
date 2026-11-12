@@ -1,5 +1,6 @@
 mod float;
 mod integer;
+mod map;
 #[cfg(feature = "hazmat")]
 mod raw;
 mod seq;
@@ -10,8 +11,10 @@ use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
 
 pub use float::CborFloat;
-pub use integer::CborInteger;
+pub(crate) use float::validate_float_encoding;
+pub use integer::{CborBigInteger, CborInteger};
 pub(crate) use integer::{CborIntegerValue, IB_LIMIT};
+pub use map::CborMap;
 use parsio::{DepthAwareReaderGuard, Read, Write};
 #[cfg(feature = "hazmat")]
 pub use raw::RawValue;
@@ -23,6 +26,7 @@ use crate::{
     error::{SeaboredDeError, SeaboredSerError},
     ib::{self, InitialByte},
     mt::MajorType,
+    profile::{DecodeOptions, Profile},
     ser::CborSerialize,
 };
 
@@ -35,12 +39,22 @@ impl CborSerialize for bool {
         buf.write(&[crate::ib::consts::IB_FALSE | *self as u8])
             .map_err(Into::into)
     }
+
+    #[inline(always)]
+    fn cbor_serialize_to_with_profile<W: parsio::Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, crate::error::SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'de> CborDeserialize<'de> for bool {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: parsio::Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: parsio::Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        _options: DecodeOptions,
     ) -> Result<Self, crate::error::SeaboredDeError>
     where
         Self: Sized + 'de,
@@ -71,12 +85,22 @@ impl CborSerialize for &str {
             writer,
         )
     }
+
+    #[inline(always)]
+    fn cbor_serialize_to_with_profile<W: parsio::Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, crate::error::SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'de> CborDeserialize<'de> for Cow<'de, str> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: parsio::Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: parsio::Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, crate::error::SeaboredDeError> {
         let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -89,7 +113,7 @@ impl<'de> CborDeserialize<'de> for Cow<'de, str> {
 
         reader.advance(1)?;
 
-        Ok(match read_string_body(reader, mt, ai)? {
+        Ok(match read_string_body(reader, mt, ai, options)? {
             Cow::Borrowed(s) => Cow::Borrowed(simdutf8::basic::from_utf8(s)?),
             Cow::Owned(s) => Cow::Owned({
                 let _ = simdutf8::basic::from_utf8(&s)?;
@@ -108,12 +132,22 @@ impl CborSerialize for &[u8] {
     ) -> Result<usize, crate::error::SeaboredSerError> {
         CborIntegerValue::serialize_inline_bytes(self, crate::mt::MajorType::Bytes, writer)
     }
+
+    #[inline(always)]
+    fn cbor_serialize_to_with_profile<W: parsio::Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, crate::error::SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: parsio::Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: parsio::Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, crate::error::SeaboredDeError> {
         let ib = InitialByte::peek(reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -126,7 +160,7 @@ impl<'de> CborDeserialize<'de> for Cow<'de, [u8]> {
 
         reader.advance(1)?;
 
-        read_string_body(reader, mt, ai)
+        read_string_body(reader, mt, ai, options)
     }
 }
 
@@ -135,14 +169,25 @@ impl CborSerialize for String {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         CborSerialize::cbor_serialize_to(&self.as_str(), writer)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        CborSerialize::cbor_serialize_to_with_profile(&self.as_str(), writer, profile)
+    }
 }
 
 impl<'de> CborDeserialize<'de> for String {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
-        <Cow<'de, str> as CborDeserialize<'de>>::cbor_deserialize_from(reader).map(Cow::into_owned)
+        <Cow<'de, str> as CborDeserialize<'de>>::cbor_deserialize_from_with_profile(reader, options)
+            .map(Cow::into_owned)
     }
 }
 
@@ -151,12 +196,30 @@ impl CborSerialize for Cow<'_, str> {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         CborSerialize::cbor_serialize_to(&self.as_ref(), writer)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        CborSerialize::cbor_serialize_to_with_profile(&self.as_ref(), writer, profile)
+    }
 }
 
 impl CborSerialize for Cow<'_, [u8]> {
     #[inline]
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         CborSerialize::cbor_serialize_to(&self.as_ref(), writer)
+    }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        CborSerialize::cbor_serialize_to_with_profile(&self.as_ref(), writer, profile)
     }
 }
 
@@ -170,12 +233,27 @@ impl<T: CborSerialize> CborSerialize for Vec<T> {
         }
         Ok(written)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        let mut written = CborIntegerValue::from(self.len())
+            .serialize_complex_mt_preamble(MajorType::Array, writer)?;
+        for item in self {
+            written += item.cbor_serialize_to_with_profile(writer, profile)?;
+        }
+        Ok(written)
+    }
 }
 
 impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Vec<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         let ib = InitialByte::cbor_deserialize_from(reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -185,9 +263,11 @@ impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Vec<T> {
                 expected: &[MajorType::Array],
             });
         }
+        ai.ensure_finite_length(options, "array")?;
 
         match ai.length(reader)? {
             Some(len) => {
+                ai.ensure_shortest(len, options, "array length")?;
                 let len: usize = len.try_into()?;
                 // The wire length is not a reason to allocate: one item needs at
                 // least one byte, so the remaining input bounds the items that exist.
@@ -196,7 +276,7 @@ impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Vec<T> {
                 let mut out = Vec::with_capacity(cap);
                 let mut nested = reader.enter()?;
                 for _ in 0..len {
-                    out.push(T::cbor_deserialize_from(&mut nested)?);
+                    out.push(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
                 Ok(out)
             }
@@ -208,7 +288,7 @@ impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Vec<T> {
                         nested.advance(1)?;
                         break;
                     }
-                    out.push(T::cbor_deserialize_from(&mut nested)?);
+                    out.push(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
                 Ok(out)
             }
@@ -226,12 +306,27 @@ impl<T: CborSerialize + Ord> CborSerialize for BTreeSet<T> {
         }
         Ok(written)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        let mut written = CborIntegerValue::from(self.len())
+            .serialize_complex_mt_preamble(MajorType::Array, writer)?;
+        for item in self {
+            written += item.cbor_serialize_to_with_profile(writer, profile)?;
+        }
+        Ok(written)
+    }
 }
 
 impl<'de, T: CborDeserialize<'de> + Ord + 'de> CborDeserialize<'de> for BTreeSet<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         let ib = InitialByte::cbor_deserialize_from(reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -241,13 +336,15 @@ impl<'de, T: CborDeserialize<'de> + Ord + 'de> CborDeserialize<'de> for BTreeSet
                 expected: &[MajorType::Array],
             });
         }
+        ai.ensure_finite_length(options, "array")?;
 
         let mut out = BTreeSet::new();
         match ai.length(reader)? {
             Some(len) => {
+                ai.ensure_shortest(len, options, "array length")?;
                 let mut nested = reader.enter()?;
                 for _ in 0..len {
-                    out.insert(T::cbor_deserialize_from(&mut nested)?);
+                    out.insert(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
             }
             None => {
@@ -257,7 +354,7 @@ impl<'de, T: CborDeserialize<'de> + Ord + 'de> CborDeserialize<'de> for BTreeSet
                         nested.advance(1)?;
                         break;
                     }
-                    out.insert(T::cbor_deserialize_from(&mut nested)?);
+                    out.insert(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
             }
         }
@@ -275,12 +372,27 @@ impl<T: CborSerialize + Eq + Hash> CborSerialize for HashSet<T> {
         }
         Ok(written)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        let mut written = CborIntegerValue::from(self.len())
+            .serialize_complex_mt_preamble(MajorType::Array, writer)?;
+        for item in self {
+            written += item.cbor_serialize_to_with_profile(writer, profile)?;
+        }
+        Ok(written)
+    }
 }
 
 impl<'de, T: CborDeserialize<'de> + Eq + Hash + 'de> CborDeserialize<'de> for HashSet<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         let ib = InitialByte::cbor_deserialize_from(reader)?;
         let (mt, ai) = ib.mt_ai();
@@ -290,13 +402,15 @@ impl<'de, T: CborDeserialize<'de> + Eq + Hash + 'de> CborDeserialize<'de> for Ha
                 expected: &[MajorType::Array],
             });
         }
+        ai.ensure_finite_length(options, "array")?;
 
         let mut out = HashSet::new();
         match ai.length(reader)? {
             Some(len) => {
+                ai.ensure_shortest(len, options, "array length")?;
                 let mut nested = reader.enter()?;
                 for _ in 0..len {
-                    out.insert(T::cbor_deserialize_from(&mut nested)?);
+                    out.insert(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
             }
             None => {
@@ -306,7 +420,7 @@ impl<'de, T: CborDeserialize<'de> + Eq + Hash + 'de> CborDeserialize<'de> for Ha
                         nested.advance(1)?;
                         break;
                     }
-                    out.insert(T::cbor_deserialize_from(&mut nested)?);
+                    out.insert(T::cbor_deserialize_from_with_profile(&mut nested, options)?);
                 }
             }
         }
@@ -322,12 +436,25 @@ impl<T: CborSerialize> CborSerialize for Option<T> {
             Some(value) => value.cbor_serialize_to(writer),
         }
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        match self {
+            None => Ok(writer.write(&[ib::consts::IB_NULL])?),
+            Some(value) => value.cbor_serialize_to_with_profile(writer, profile),
+        }
+    }
 }
 
 impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Option<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         match reader.peek_byte()? {
             ib::consts::IB_NULL => {
@@ -337,7 +464,7 @@ impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Option<T> {
             ib::consts::IB_UNDEFINED => Err(SeaboredDeError::UnsupportedSimpleValue(
                 ib::consts::IB_UNDEFINED,
             )),
-            _ => T::cbor_deserialize_from(reader).map(Some),
+            _ => T::cbor_deserialize_from_with_profile(reader, options).map(Some),
         }
     }
 }
@@ -347,14 +474,24 @@ impl<T: CborSerialize> CborSerialize for Box<T> {
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
         CborSerialize::cbor_serialize_to(self.as_ref(), writer)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        CborSerialize::cbor_serialize_to_with_profile(self.as_ref(), writer, profile)
+    }
 }
 
 impl<'de, T: CborDeserialize<'de> + 'de> CborDeserialize<'de> for Box<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
-        T::cbor_deserialize_from(reader).map(Box::new)
+        T::cbor_deserialize_from_with_profile(reader, options).map(Box::new)
     }
 }
 
@@ -365,11 +502,20 @@ fn read_string_body<'de, R: parsio::Read<'de>>(
     reader: &mut DepthAwareReaderGuard<'_, R>,
     mt: crate::mt::MajorType,
     ai: crate::ib::AdditionalInfo,
+    options: DecodeOptions,
 ) -> Result<Cow<'de, [u8]>, crate::error::SeaboredDeError> {
+    if options.is_checking() {
+        ai.ensure_finite_length(options, "string")?;
+    }
+
     match ai.find_subsequent_len(reader) {
-        Ok(len) => Ok(reader.read_slice(len.try_into()?)?),
+        Ok(len) => {
+            let len_u64: u64 = len.into();
+            ai.ensure_shortest(len_u64, options, "string length")?;
+            Ok(reader.read_slice(len_u64.try_into()?)?)
+        }
         Err(crate::error::SeaboredDeError::IndefiniteLen) => {
-            read_indefinite_string_body(reader, mt)
+            read_indefinite_string_body(reader, mt, options)
         }
         Err(e) => Err(e),
     }
@@ -381,6 +527,7 @@ fn read_string_body<'de, R: parsio::Read<'de>>(
 fn read_indefinite_string_body<'de, R: parsio::Read<'de>>(
     reader: &mut DepthAwareReaderGuard<'_, R>,
     mt: crate::mt::MajorType,
+    options: DecodeOptions,
 ) -> Result<Cow<'de, [u8]>, crate::error::SeaboredDeError> {
     let mut chunks: Option<Vec<u8>> = None;
     // One level deeper for the container body, like every other indefinite-length item
@@ -397,7 +544,11 @@ fn read_indefinite_string_body<'de, R: parsio::Read<'de>>(
         ib.expect_string_chunk(mt)?;
 
         reader.advance(1)?;
-        let len: usize = ib.ai().find_subsequent_len(&mut reader)?.try_into()?;
+        let chunk_len = ib.ai().find_subsequent_len(&mut reader)?;
+        let chunk_len: u64 = chunk_len.into();
+        ib.ai()
+            .ensure_shortest(chunk_len, options, "string chunk length")?;
+        let len: usize = chunk_len.try_into()?;
         let chunk = reader.read_slice(len)?;
 
         // A chunk is text itself: multi-byte characters may not split
