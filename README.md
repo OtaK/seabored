@@ -5,7 +5,7 @@
 
 ## Description
 
-Implementation of the CBOR data format. Compatible with Serde (optional).
+Implementation of the CBOR data format. Serde bridge and native derive (optional).
 
 Compatible with WASM.
 
@@ -21,10 +21,38 @@ Here: [https://docs.rs/seabored](https://docs.rs/seabored)
 Not great as of now, will get better in subsequent releases.
 If you want examples, please head to the `benches` folder.
 
+### Native derive
+
+With the `derive` feature, the native traits can be derived without going through
+Serde. Attributes are under `#[cbor(...)]`.
+
+```rust,ignore
+use seabored::de::from_bytes;
+use seabored::ser::CborSerialize;
+
+#[derive(Debug, PartialEq, seabored::CborSerialize, seabored::CborDeserialize)]
+struct Record {
+    id: u32,
+    #[cbor(key = "payload", tag = 24)]
+    payload: Vec<u8>,
+    #[cbor(skip, default)]
+    cache: u64,
+}
+
+let bytes = Record { id: 1, payload: vec![1, 2], cache: 0 }
+    .cbor_serialize()
+    .unwrap();
+let decoded: Record = from_bytes(&bytes).unwrap();
+```
+
+Profiles are selected per container: `"rfc"` (default, permissive decode),
+`"pref-plus"` (shortest headers on decode), and `"deterministic"` (canonical map
+key order, definite containers, exact key set). See `seabored-derive/README.md`.
+
 ## Quirks
 
 - It's *fast*. Like, *seriously fast*. See [BENCHMARKS.md](benches/BENCHMARKS.md)
-- As of now, it IS vulnerable to billion laughs attacks. There is no recursion depth tracking, but it will be addressed soon.
+- Recursion depth is tracked on both decode paths; the default limit is 256 levels.
 - As always, Serde de/ser is quirky as hell with CBOR since the Rust types do not map very well to CBOR primitives.
   - `Option::None` is serialized as CBOR Null SimpleValue
   - `()` unit type is serialized as CBOR Undefined SimpleValue
@@ -38,14 +66,15 @@ If you want examples, please head to the `benches` folder.
 
 - `inline-nontrivial`: Enabled by default, adds the `#[inline]` attributes to most non-trivial functions. This is for performance at the cost of codesize (even though those reports are usually greatly exaggerated). Disable it (by using `default-features = false`) if you absolutely need smol code size.
 - `serde`: Enables Serde compatibility
+- `derive`: Enables the native `CborSerialize` / `CborDeserialize` derive macros
 - `hazmat`: Enables dangerous features (`RawValue`)
 
 ## Roadmap
 
-- [ ] Billion Laughs protection (recursion depth tracking)
+- [x] Billion Laughs protection (recursion depth tracking)
 - [ ] Add CBOR RFC compat feature flag, to reduce branches
-- [ ] Make a homebrew derive for people who don't care about serde/etc
-  - This would have more power as you'll be able to be more in control as to how stuff gets de/serialized (like tags, simple values, etc, but also overriding map keys or forcing deterministic profile)
+- [x] Native derive for people who don't care about serde
+  - CBOR-specific control: tags, simple values, map keys, profiles, defaults/skips
 - [x] ~~Facet compat~~ Not happening.
 - [ ] Improve performance (yes, there's still some to get)
 - [ ] Docs improvements, examples, etc

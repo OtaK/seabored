@@ -14,12 +14,12 @@ pub mod types;
 
 pub mod error;
 
-// TODO: Homebrew a derive for CBOR specifics (like p+ or dcbor profiles, tags, simple values etc)
 #[cfg(feature = "derive")]
-mod derive {}
+pub use seabored_derive::{CborDeserialize, CborSerialize};
 
 pub mod reexports {
     pub use half;
+    pub use parsio;
 }
 
 /// A decoded CBOR item. Strings and bytes borrow when the input can lend, so `Value` is never
