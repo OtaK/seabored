@@ -7,12 +7,15 @@ pub mod de;
 pub mod ib;
 pub mod io;
 pub mod mt;
+pub mod profile;
 pub mod ser;
 #[cfg(feature = "serde")]
 pub mod serde;
 pub mod types;
 
 pub mod error;
+
+pub use profile::{DecodeOptions, Profile};
 
 #[cfg(feature = "derive")]
 pub use seabored_derive::{CborDeserialize, CborSerialize};
@@ -24,9 +27,17 @@ pub mod reexports {
 
 /// A decoded CBOR item. Strings and bytes borrow when the input can lend, so `Value` is never
 /// `DeserializeOwned` (`'de: 'a` in the serde impl); [`OwnedValue`] is for readers that cannot lend.
+///
+/// Tags 2/3 become [`Value::Integer`] when the magnitude fits CBOR's major types 0/1 and
+/// [`Value::BigInteger`] otherwise; leading zeroes are dropped either way. Other tags stay
+/// [`Value::Tagged`]. Encoding under [`Profile::PreferredPlus`] or [`Profile::Deterministic`] is
+/// definite and canonical; [`Profile::General`] keeps container shape for everything except
+/// bignums.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Value<'a> {
     Integer(types::CborInteger),
+    /// A normalized tag 2/3 bignum that does not fit [`Value::Integer`].
+    BigInteger(types::CborBigInteger<'a>),
     Float(types::CborFloat),
     Bytes(std::borrow::Cow<'a, [u8]>),
     String(std::borrow::Cow<'a, str>),
@@ -48,6 +59,7 @@ impl Value<'_> {
     pub fn mt(&self) -> MajorType {
         match self {
             Value::Integer(cbor_int) => MajorType::from(cbor_int),
+            Value::BigInteger(_) => MajorType::Tagged,
             Value::Bytes(_) => MajorType::Bytes,
             Value::String(_) => MajorType::String,
             Value::Sequence(seq) => seq.mt,
@@ -60,6 +72,13 @@ impl Value<'_> {
     pub fn as_integer(&self) -> Option<&types::CborInteger> {
         match self {
             Self::Integer(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_big_integer(&self) -> Option<&types::CborBigInteger<'_>> {
+        match self {
+            Self::BigInteger(v) => Some(v),
             _ => None,
         }
     }
@@ -114,7 +133,7 @@ impl Value<'_> {
     }
 }
 
-/// Builds a definite-length array (profile `draft-ietf-cbor-serialization-06` §4.1 item 2).
+/// Builds a definite-length array (profile `draft-ietf-cbor-serialization-09` §4.1 item 2).
 /// Indefinite: `Value::Sequence(CborSequence::new_indefinite(MajorType::Array))`.
 impl<'a> FromIterator<Value<'a>> for Value<'a> {
     #[inline(always)]
@@ -157,11 +176,20 @@ impl ::serde_core::Serialize for Value<'_> {
                     serializer.serialize_u64(cbor_integer.into())
                 }
             }
+            Value::BigInteger(big) => {
+                let payload = Value::Bytes(big.magnitude().into());
+                let tag = if big.is_negative() { 3 } else { 2 };
+                crate::serde::serialize_tagged(serializer, tag, &payload)
+            }
             Value::Float(cbor_float) => serializer.serialize_f64(**cbor_float),
             Value::Bytes(cow) => serializer.serialize_bytes(cow),
             Value::String(cow) => serializer.serialize_str(cow),
             Value::Sequence(cbor_sequence) => {
                 use ::serde_core::ser::SerializeSeq;
+
+                if matches!(cbor_sequence.mt, MajorType::Bytes | MajorType::String) {
+                    return crate::serde::serialize_chunked_string(serializer, cbor_sequence);
+                }
 
                 let mut seq = serializer.serialize_seq(Some(cbor_sequence.len()))?;
                 for value in cbor_sequence.iter() {
@@ -383,12 +411,21 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
                             ::serde_core::de::Error::custom("tagged CBOR Value without a tag")
                         })?;
 
-                        Ok(Value::Tagged((
-                            tag.into(),
-                            Box::new(<Value<'de> as ::serde_core::Deserialize<'de>>::deserialize(
-                                deserializer,
-                            )?),
-                        )))
+                        let payload = <Value<'de> as ::serde_core::Deserialize<'de>>::deserialize(
+                            deserializer,
+                        )?;
+
+                        if tag == 2 || tag == 3 {
+                            let options = crate::serde::value_options()
+                                .unwrap_or(crate::DecodeOptions::GENERAL);
+
+                            return crate::de::bignum_or_tagged(tag.into(), payload, options)
+                                .map_err(|err| {
+                                    ::serde_core::de::Error::custom(format!("bignum: {err}"))
+                                });
+                        }
+
+                        Ok(Value::Tagged((tag.into(), Box::new(payload))))
                     }
                 }
 
@@ -441,6 +478,7 @@ impl<'a> Value<'a> {
     pub fn into_owned(self) -> Value<'static> {
         match self {
             Value::Integer(value) => Value::Integer(value),
+            Value::BigInteger(value) => Value::BigInteger(value.into_owned()),
             Value::Float(value) => Value::Float(value),
             Value::Bytes(bytes) => Value::Bytes(std::borrow::Cow::Owned(bytes.into_owned())),
             Value::String(string) => Value::String(std::borrow::Cow::Owned(string.into_owned())),
@@ -467,7 +505,9 @@ fn map_sequence<T: crate::ser::CborSerialize, U: crate::ser::CborSerialize>(
     } else {
         types::CborSequence::new_finite(seq.mt, seq.len())
     };
+
     converted.extend(seq.into_iter().map(&mut convert));
+
     converted
 }
 

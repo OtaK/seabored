@@ -1,7 +1,9 @@
 use color_eyre::eyre::Result;
 use half::f16;
 use pretty_assertions::{assert_eq, assert_ne};
-use seabored::{Value, mt::MajorType, ser::CborSerialize as _, types::CborSequence};
+use seabored::{
+    Value, mt::MajorType, ser::CborSerialize as _, types::CborBigInteger, types::CborSequence,
+};
 
 macro_rules! assert_value_eq_bytes {
     ($value:expr, $hexstring:literal) => {
@@ -50,12 +52,24 @@ fn appendix_a() -> Result<()> {
         "1b000000e8d4a51000"
     );
     assert_value_eq_bytes!(Value::Integer(u64::MAX.into()), "1bffffffffffffffff");
-    //     18446744073709551616 	hex_literal::hex!("0xc249010000000000000000")
+    assert_value_eq_bytes!(
+        Value::BigInteger(CborBigInteger::new(
+            false,
+            &hex_literal::hex!("010000000000000000")[..]
+        )),
+        "c249010000000000000000"
+    );
     assert_value_eq_bytes!(
         Value::Integer((-(u64::MAX as i128)).try_into().unwrap()),
         "3bffffffffffffffff"
     );
-    //     -18446744073709551617 	hex_literal::hex!("0xc349010000000000000000")
+    assert_value_eq_bytes!(
+        Value::BigInteger(CborBigInteger::new(
+            true,
+            &hex_literal::hex!("010000000000000000")[..]
+        )),
+        "c349010000000000000000"
+    );
     assert_value_eq_bytes!(Value::Integer((-1_i8).into()), "20");
     assert_value_eq_bytes!(Value::Integer((-10_i8).into()), "29");
     assert_value_eq_bytes!(Value::Integer((-100_i8).into()), "3863");

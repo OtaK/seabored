@@ -61,6 +61,12 @@ jobs:
           command: test
           args: --package seabored --no-default-features --features serde
 
+      - name: Run cargo test (no default features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace --no-default-features
+
   lints:
     name: Lints
     runs-on: ubuntu-latest
@@ -95,3 +101,24 @@ jobs:
           args: --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install nightly toolchain with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+
+      - name: Run Miri on profile tests and Appendix K vectors
+        run: |
+          cargo miri setup
+          cargo miri test --all-features \
+            --test draft09_vectors \
+            --test profile_decoding \
+            --test profile_encoding \
+            --test profile_api

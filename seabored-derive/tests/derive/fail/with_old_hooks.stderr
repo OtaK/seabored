@@ -1,0 +1,15 @@
+error[E0425]: cannot find function `cbor_serialize_to_with_profile` in module `old`
+  --> tests/derive/fail/with_old_hooks.rs:21:10
+   |
+21 | #[derive(seabored::CborSerialize, seabored::CborDeserialize)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^ not found in `old`
+   |
+   = note: this error originates in the derive macro `seabored::CborSerialize` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0425]: cannot find function `cbor_deserialize_from_with_profile` in module `old`
+  --> tests/derive/fail/with_old_hooks.rs:21:35
+   |
+21 | #[derive(seabored::CborSerialize, seabored::CborDeserialize)]
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `old`
+   |
+   = note: this error originates in the derive macro `seabored::CborDeserialize` (in Nightly builds, run with -Z macro-backtrace for more info)

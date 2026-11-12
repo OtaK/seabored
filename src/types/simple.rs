@@ -2,6 +2,7 @@ use crate::{
     de::CborDeserialize,
     error::{SeaboredDeError, SeaboredSerError},
     ib::{self, InitialByte},
+    profile::{DecodeOptions, Profile},
     ser::CborSerialize,
 };
 
@@ -49,12 +50,22 @@ impl CborSerialize for CborSimpleValue {
             reserved => Err(SeaboredSerError::ReservedSimpleValue(reserved)),
         }
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'de> CborDeserialize<'de> for CborSimpleValue {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'de>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'de>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        _options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError> {
         let ib = InitialByte::cbor_deserialize_from(reader)?;
         let raw = ib.raw();

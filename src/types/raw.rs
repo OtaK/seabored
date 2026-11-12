@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{error::SeaboredSerError, ser::CborSerialize};
+use crate::{error::SeaboredSerError, profile::Profile, ser::CborSerialize};
 use parsio::Write;
 
 /// A raw, pre-encoded CBOR value backed by a byte buffer. Bytes are assumed valid; serialization
@@ -61,6 +61,34 @@ impl CborSerialize for RawValue<'_> {
     /// Writes the raw CBOR bytes verbatim into `writer`
     #[inline(always)]
     fn cbor_serialize_to<W: Write>(&self, writer: &mut W) -> Result<usize, SeaboredSerError> {
+        writer.write(&self.0).map_err(Into::into)
+    }
+
+    /// Validates the raw bytes by round-tripping through `Value` under the requested profile.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        if !profile.is_strict() {
+            return self.cbor_serialize_to(writer);
+        }
+
+        let value: crate::Value<'_> = crate::de::from_bytes(self.0.as_ref()).map_err(|_| {
+            SeaboredSerError::ProfileUnsupported {
+                profile,
+                what: "RawValue does not contain one well-formed CBOR item",
+            }
+        })?;
+        let canonical = value.cbor_serialize_with_profile(profile)?;
+        if canonical.as_slice() != self.0.as_ref() {
+            return Err(SeaboredSerError::ProfileUnsupported {
+                profile,
+                what: "RawValue is not canonical",
+            });
+        }
+
         writer.write(&self.0).map_err(Into::into)
     }
 }

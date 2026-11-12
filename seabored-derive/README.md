@@ -35,7 +35,7 @@ derive both.
 - `key = "text"` or `key = N`: map key; defaults to the field name.
 - `tag = N`: tag around the field value.
 - `simple_value`: `u8` field encoded as a CBOR simple value.
-- `with = module`: module with `cbor_serialize_to` / `cbor_deserialize_from`.
+- `with = module`: encode through `module::cbor_serialize_to_with_profile(value, writer, profile)`; decode through `module::cbor_deserialize_from_with_profile(reader, options)`.
 - `default` or `default = expr`: value for a missing map key.
 - `skip`: omit on encode, fill from `default` on decode.
 - `indefinite`: encode `Vec`/`BTreeSet`/`HashSet` fields as `9f … ff`.
@@ -49,10 +49,15 @@ that entry.
 ## Profiles
 
 - `rfc`: permissive decode.
-- `pref-plus`: rejects non-shortest headers, tags, and declared keys the derive
-  reads; tolerates indefinite containers; skips unknown keys unchecked.
-- `deterministic`: `pref-plus` plus definite containers, canonical map key order,
-  exact declared key set, and no default filling.
+- `pref-plus`: checking decode. Rejects non-shortest arguments, headers, tags,
+  and declared keys; rejects indefinite containers; validates floats, strings,
+  bignums, and skipped/unknown values.
+- `deterministic`: `pref-plus` plus canonical map key order, exact declared key
+  set, and no default filling.
+
+These are attribute defaults. Runtime profile calls
+(`cbor_serialize_with_profile`, `from_bytes_with_options`) override them for that
+item.
 
 `#[cbor(indefinite)]` is rejected under `pref-plus` and `deterministic`.
 
@@ -60,7 +65,7 @@ that entry.
 
 Native impls exist for integers, floats, `bool`, `String`, `Cow<str>`,
 `Cow<[u8]>`, `Vec<T>`, `BTreeSet<T>`, `HashSet<T>`, `Option<T>`, `Box<T>`,
-`CborInteger`, `CborFloat`, `CborSequence<T>` (serialize), `CborSimpleValue`,
+`CborInteger`, `CborFloat`, `CborSequence<T>` (serialize), `CborMap<K, V>`, `CborSimpleValue`,
 `RawValue`, and `Value`.
 
 `Vec<u8>` encodes as an array of integers. Use `Cow<[u8]>` for byte strings.

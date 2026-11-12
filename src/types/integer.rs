@@ -1,15 +1,61 @@
 use crate::{
     de::CborDeserialize,
     error::{SeaboredDeError, SeaboredSerError},
-    ib::{self, InitialByte},
+    ib::{self, AdditionalInfo, InitialByte},
     io::ReadExt as _,
     mt::MajorType,
+    profile::{DecodeOptions, Profile},
     ser::CborSerialize,
 };
 
 use parsio::{DepthAwareReaderGuard, Read, Write};
+use std::borrow::Cow;
 
 pub(crate) const IB_LIMIT: u8 = 0x17;
+
+#[inline]
+fn read_uint_argument<'data, R: Read<'data>>(
+    reader: &mut DepthAwareReaderGuard<'_, R>,
+    ai: AdditionalInfo,
+) -> Result<u64, SeaboredDeError> {
+    Ok(match ai.action()? {
+        crate::ib::AdditionalInfoAction::DoNothing => ai.raw() as u64,
+        crate::ib::AdditionalInfoAction::Uint8 => reader.read_byte()? as u64,
+        crate::ib::AdditionalInfoAction::Uint16 => reader.read_be_u16()? as u64,
+        crate::ib::AdditionalInfoAction::Uint32 => reader.read_be_u32()? as u64,
+        crate::ib::AdditionalInfoAction::Uint64 => reader.read_be_u64()?,
+        crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
+            return Err(SeaboredDeError::IllegalAdditionalInfo(ai.raw()));
+        }
+    })
+}
+
+#[inline]
+fn decode_signed_value<'data, R: Read<'data>>(
+    reader: &mut DepthAwareReaderGuard<'_, R>,
+    options: DecodeOptions,
+) -> Result<i128, SeaboredDeError> {
+    let ib = InitialByte::cbor_deserialize_from(reader)?;
+    let (mt, ai) = ib.mt_ai();
+    let negative = match mt {
+        MajorType::Uint => false,
+        MajorType::NegativeUint => true,
+        _ => {
+            return Err(SeaboredDeError::IncorrectMajorType {
+                actual: mt,
+                expected: &[MajorType::Uint, MajorType::NegativeUint],
+            });
+        }
+    };
+
+    let raw = read_uint_argument(reader, ai)?;
+    ai.ensure_shortest(raw, options, "integer")?;
+    Ok(if negative {
+        -1 - i128::from(raw)
+    } else {
+        i128::from(raw)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
@@ -162,7 +208,13 @@ impl CborIntegerValue {
 /// The byte string is a network byte order integer, and leading zeroes are allowed
 /// (RFC 8949 §3.4.3), so they get skipped before the payload is left-padded to 16 bytes.
 #[cfg_attr(feature = "inline-nontrivial", inline)]
-fn bignum_to_u128(wire_bytes: &[u8]) -> Result<u128, SeaboredDeError> {
+fn bignum_to_u128(wire_bytes: &[u8], options: DecodeOptions) -> Result<u128, SeaboredDeError> {
+    if options.is_checking()
+        && (wire_bytes.is_empty() || wire_bytes[0] == 0 || wire_bytes.len() <= 8)
+    {
+        return Err(SeaboredDeError::NonPreferredEncoding { what: "bignum" });
+    }
+
     let significant = match wire_bytes.iter().position(|&byte| byte != 0) {
         Some(first) => &wire_bytes[first..],
         None => return Ok(0),
@@ -175,6 +227,75 @@ fn bignum_to_u128(wire_bytes: &[u8]) -> Result<u128, SeaboredDeError> {
     let mut bytes = [0u8; 16];
     bytes[16 - significant.len()..].copy_from_slice(significant);
     Ok(u128::from_be_bytes(bytes))
+}
+
+/// A CBOR bignum: tag 2 (positive) or tag 3 (negative) around a byte string.
+///
+/// The magnitude is normalized: big-endian with no leading zeroes. An empty magnitude is
+/// `0` for tag 2 and `-1` for tag 3, because tag 3 means `-1 - magnitude`; bignums have no
+/// negative zero. Decoding strips any leading zeroes the wire had, so re-encoding is
+/// canonical even under [`Profile::General`](crate::Profile::General).
+///
+/// draft-09 §4.2 makes the empty-payload rule explicit (0 for tag 2, -1 for tag 3) in
+/// [cbor-wg PR #101](https://github.com/cbor-wg/draft-ietf-cbor-serialization/pull/101);
+/// the published -09 text still says "the value zero".
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CborBigInteger<'a> {
+    negative: bool,
+    magnitude: Cow<'a, [u8]>,
+}
+
+impl<'a> CborBigInteger<'a> {
+    /// Builds a bignum, stripping leading zeroes from `magnitude`.
+    ///
+    /// `new(true, [])` is `-1`, not negative zero.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn new(negative: bool, magnitude: impl Into<Cow<'a, [u8]>>) -> Self {
+        let magnitude = magnitude.into();
+        let first = magnitude
+            .iter()
+            .position(|&byte| byte != 0)
+            .unwrap_or(magnitude.len());
+        let magnitude = match magnitude {
+            Cow::Borrowed(bytes) => Cow::Borrowed(&bytes[first..]),
+            Cow::Owned(mut bytes) => {
+                bytes.drain(..first);
+                Cow::Owned(bytes)
+            }
+        };
+        Self {
+            negative,
+            magnitude,
+        }
+    }
+
+    /// Whether the tag was 3.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn is_negative(&self) -> bool {
+        self.negative
+    }
+
+    /// The big-endian magnitude, without leading zeroes; empty means `0` (tag 2) or `-1`
+    /// (tag 3).
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn magnitude(&self) -> &[u8] {
+        &self.magnitude
+    }
+
+    /// Whether this is the integer zero: tag 2 with an empty magnitude.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn is_zero(&self) -> bool {
+        !self.negative && self.magnitude.is_empty()
+    }
+
+    /// Drops the borrow.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    pub fn into_owned(self) -> CborBigInteger<'static> {
+        CborBigInteger {
+            negative: self.negative,
+            magnitude: Cow::Owned(self.magnitude.into_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -221,12 +342,22 @@ impl CborSerialize for CborInteger {
             ])?,
         })
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'a> CborDeserialize<'a> for CborInteger {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, crate::error::SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -245,9 +376,13 @@ impl<'a> CborDeserialize<'a> for CborInteger {
             }
         };
 
-        let value = ai.find_subsequent_len(reader)?;
+        let value = read_uint_argument(reader, ai)?;
+        ai.ensure_shortest(value, options, "integer")?;
 
-        Ok(Self { value, negative })
+        Ok(Self {
+            value: value.into(),
+            negative,
+        })
     }
 }
 
@@ -372,6 +507,15 @@ impl CborSerialize for u8 {
         }
         .map_err(Into::into)
     }
+
+    #[inline]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl CborSerialize for u16 {
@@ -384,6 +528,15 @@ impl CborSerialize for u16 {
         let mut buf = [ib::consts::IB_UINT_16, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
+    }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
     }
 }
 
@@ -398,6 +551,15 @@ impl CborSerialize for u32 {
         buf[1..].copy_from_slice(&self.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
     }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl CborSerialize for u64 {
@@ -410,6 +572,15 @@ impl CborSerialize for u64 {
         let mut buf = [ib::consts::IB_UINT_64, 0, 0, 0, 0, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&self.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
+    }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
     }
 }
 
@@ -427,6 +598,15 @@ impl CborSerialize for u128 {
         Ok(writer.write(&[ib::consts::IB_UNSIGNED_BIG_NUM])?
             + CborIntegerValue::serialize_inline_bytes(&bytes[offset..], MajorType::Bytes, writer)?)
     }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl CborSerialize for i8 {
@@ -442,6 +622,15 @@ impl CborSerialize for i8 {
             writer.write(&[mt | ib::consts::IB_UINT_8, ui])
         }
         .map_err(Into::into)
+    }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
     }
 }
 
@@ -462,6 +651,15 @@ impl CborSerialize for i16 {
         buf[1..].copy_from_slice(&ui.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
     }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl CborSerialize for i32 {
@@ -481,6 +679,15 @@ impl CborSerialize for i32 {
         buf[1..].copy_from_slice(&ui.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
     }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl CborSerialize for i64 {
@@ -499,6 +706,15 @@ impl CborSerialize for i64 {
         let mut buf = [mt | ib::consts::IB_UINT_64, 0, 0, 0, 0, 0, 0, 0, 0];
         buf[1..].copy_from_slice(&ui.to_be_bytes());
         writer.write(&buf).map_err(Into::into)
+    }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
     }
 }
 
@@ -531,12 +747,22 @@ impl CborSerialize for i128 {
         Ok(writer.write(&[mt | ib::consts::IB_UNSIGNED_BIG_NUM])?
             + CborIntegerValue::serialize_inline_bytes(&bytes[offset..], MajorType::Bytes, writer)?)
     }
+
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_serialize_to_with_profile<W: Write>(
+        &self,
+        writer: &mut W,
+        _profile: Profile,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_serialize_to(writer)
+    }
 }
 
 impl<'a> CborDeserialize<'a> for u8 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -550,25 +776,17 @@ impl<'a> CborDeserialize<'a> for u8 {
             });
         }
 
-        // Non-preferred widths (§4.1) leave `u8`'s range; read once here and narrow on the spot
-        Ok(match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => ib.0,
-            crate::ib::AdditionalInfoAction::Uint8 => reader.read_byte()?,
-            crate::ib::AdditionalInfoAction::Uint16 => u8::try_from(reader.read_be_u16()?)?,
-            crate::ib::AdditionalInfoAction::Uint32 => u8::try_from(reader.read_be_u32()?)?,
-            crate::ib::AdditionalInfoAction::Uint64 => u8::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        })
+        let raw = read_uint_argument(reader, ai)?;
+        ai.ensure_shortest(raw, options, "integer")?;
+        u8::try_from(raw).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for u16 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -582,24 +800,17 @@ impl<'a> CborDeserialize<'a> for u16 {
             });
         }
 
-        Ok(match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => ib.0 as u16,
-            crate::ib::AdditionalInfoAction::Uint8 => reader.read_byte()? as u16,
-            crate::ib::AdditionalInfoAction::Uint16 => reader.read_be_u16()?,
-            crate::ib::AdditionalInfoAction::Uint32 => u16::try_from(reader.read_be_u32()?)?,
-            crate::ib::AdditionalInfoAction::Uint64 => u16::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        })
+        let raw = read_uint_argument(reader, ai)?;
+        ai.ensure_shortest(raw, options, "integer")?;
+        u16::try_from(raw).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for u32 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -613,24 +824,17 @@ impl<'a> CborDeserialize<'a> for u32 {
             });
         }
 
-        Ok(match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => ib.0 as u32,
-            crate::ib::AdditionalInfoAction::Uint8 => reader.read_byte()? as u32,
-            crate::ib::AdditionalInfoAction::Uint16 => reader.read_be_u16()? as u32,
-            crate::ib::AdditionalInfoAction::Uint32 => reader.read_be_u32()?,
-            crate::ib::AdditionalInfoAction::Uint64 => u32::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        })
+        let raw = read_uint_argument(reader, ai)?;
+        ai.ensure_shortest(raw, options, "integer")?;
+        u32::try_from(raw).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for u64 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -644,21 +848,17 @@ impl<'a> CborDeserialize<'a> for u64 {
             });
         }
 
-        Ok(match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => ib.0 as u64,
-            crate::ib::AdditionalInfoAction::Uint8 => reader.read_byte()? as u64,
-            crate::ib::AdditionalInfoAction::Uint16 => reader.read_be_u16()? as u64,
-            crate::ib::AdditionalInfoAction::Uint32 => reader.read_be_u32()? as u64,
-            crate::ib::AdditionalInfoAction::Uint64 => reader.read_be_u64()?,
-            _ => return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0)),
-        })
+        let raw = read_uint_argument(reader, ai)?;
+        ai.ensure_shortest(raw, options, "integer")?;
+        Ok(raw)
     }
 }
 
 impl<'a> CborDeserialize<'a> for u128 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -666,7 +866,7 @@ impl<'a> CborDeserialize<'a> for u128 {
         let tag_ib = InitialByte::peek(reader)?;
         // Not a bignum, fall back to the uXX chain
         if tag_ib.mt() == MajorType::Uint {
-            return u64::cbor_deserialize_from(reader).map(Into::into);
+            return u64::cbor_deserialize_from_with_profile(reader, options).map(Into::into);
         }
 
         // Check if it's the correct tag
@@ -676,157 +876,74 @@ impl<'a> CborDeserialize<'a> for u128 {
                 expected: ib::consts::IB_UNSIGNED_BIG_NUM,
             });
         }
+        tag_ib.ai().ensure_shortest(2, options, "tag")?;
 
         // Skip over the Tag IB
         reader.advance(1)?;
 
-        let wire_bytes = std::borrow::Cow::<[u8]>::cbor_deserialize_from(reader)?;
-        bignum_to_u128(&wire_bytes)
+        let wire_bytes =
+            std::borrow::Cow::<[u8]>::cbor_deserialize_from_with_profile(reader, options)?;
+        bignum_to_u128(&wire_bytes, options)
     }
 }
 
 impl<'a> CborDeserialize<'a> for i8 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
-        let (mt, ai) = ib.mt_ai();
-        if !matches!(mt, MajorType::NegativeUint | MajorType::Uint) {
-            return Err(SeaboredDeError::IncorrectMajorType {
-                actual: mt,
-                expected: &[MajorType::Uint, MajorType::NegativeUint],
-            });
-        }
-        // `i8` tops at 127 whatever the width (RFC 8949 §4.1): read once and narrow — a second
-        // decoder pays classification and EOF twice per element.
-        let payload = match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => {
-                (ib.0 - mt as u8 * ib::consts::IB_SMALL_NEGATIVE_UINT) as i8
-            }
-            crate::ib::AdditionalInfoAction::Uint8 => i8::try_from(reader.read_byte()?)?,
-            crate::ib::AdditionalInfoAction::Uint16 => i8::try_from(reader.read_be_u16()?)?,
-            crate::ib::AdditionalInfoAction::Uint32 => i8::try_from(reader.read_be_u32()?)?,
-            crate::ib::AdditionalInfoAction::Uint64 => i8::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        };
-
-        Ok(-(matches!(mt, MajorType::NegativeUint) as i8) ^ payload)
+        i8::try_from(decode_signed_value(reader, options)?).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for i16 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
-        let (mt, ai) = ib.mt_ai();
-        if !matches!(mt, MajorType::NegativeUint | MajorType::Uint) {
-            return Err(SeaboredDeError::IncorrectMajorType {
-                actual: mt,
-                expected: &[MajorType::Uint, MajorType::NegativeUint],
-            });
-        }
-        // A `u8` argument fits `i16` either way (§4.1); wider ones are read once and narrowed
-        let payload = match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => {
-                (ib.0 - mt as u8 * ib::consts::IB_SMALL_NEGATIVE_UINT) as i16
-            }
-            crate::ib::AdditionalInfoAction::Uint8 => i16::from(reader.read_byte()?),
-            crate::ib::AdditionalInfoAction::Uint16 => i16::try_from(reader.read_be_u16()?)?,
-            crate::ib::AdditionalInfoAction::Uint32 => i16::try_from(reader.read_be_u32()?)?,
-            crate::ib::AdditionalInfoAction::Uint64 => i16::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        };
-
-        Ok(-(matches!(mt, MajorType::NegativeUint) as i16) ^ payload)
+        i16::try_from(decode_signed_value(reader, options)?).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for i32 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
-        let (mt, ai) = ib.mt_ai();
-        if !matches!(mt, MajorType::NegativeUint | MajorType::Uint) {
-            return Err(SeaboredDeError::IncorrectMajorType {
-                actual: mt,
-                expected: &[MajorType::Uint, MajorType::NegativeUint],
-            });
-        }
-        // `u8`/`u16` arguments fit `i32` either way (§4.1); wider ones are read once and narrowed
-        let payload = match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => {
-                (ib.0 - mt as u8 * ib::consts::IB_SMALL_NEGATIVE_UINT) as i32
-            }
-            crate::ib::AdditionalInfoAction::Uint8 => i32::from(reader.read_byte()?),
-            crate::ib::AdditionalInfoAction::Uint16 => i32::from(reader.read_be_u16()?),
-            crate::ib::AdditionalInfoAction::Uint32 => i32::try_from(reader.read_be_u32()?)?,
-            crate::ib::AdditionalInfoAction::Uint64 => i32::try_from(reader.read_be_u64()?)?,
-            // ai=31 is reserved on integer major types (RFC 8949 §3.1)
-            crate::ib::AdditionalInfoAction::IndefiniteLenSeq => {
-                return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0));
-            }
-        };
-
-        Ok(-(matches!(mt, MajorType::NegativeUint) as i32) ^ payload)
+        i32::try_from(decode_signed_value(reader, options)?).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for i64 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
     {
-        let ib = InitialByte::cbor_deserialize_from(reader)?;
-        let (mt, ai) = ib.mt_ai();
-        if !matches!(mt, MajorType::NegativeUint | MajorType::Uint) {
-            return Err(SeaboredDeError::IncorrectMajorType {
-                actual: mt,
-                expected: &[MajorType::Uint, MajorType::NegativeUint],
-            });
-        }
-        // Already every width; the 8-byte argument is the only one that can leave `i64`'s range
-        let payload = match ai.action()? {
-            crate::ib::AdditionalInfoAction::DoNothing => {
-                (ib.0 - mt as u8 * ib::consts::IB_SMALL_NEGATIVE_UINT) as i64
-            }
-            crate::ib::AdditionalInfoAction::Uint8 => i64::from(reader.read_byte()?),
-            crate::ib::AdditionalInfoAction::Uint16 => i64::from(reader.read_be_u16()?),
-            crate::ib::AdditionalInfoAction::Uint32 => i64::from(reader.read_be_u32()?),
-            crate::ib::AdditionalInfoAction::Uint64 => i64::try_from(reader.read_be_u64()?)?,
-            _ => return Err(SeaboredDeError::IllegalAdditionalInfo(ai.0)),
-        };
-
-        Ok(-(matches!(mt, MajorType::NegativeUint) as i64) ^ payload)
+        i64::try_from(decode_signed_value(reader, options)?).map_err(Into::into)
     }
 }
 
 impl<'a> CborDeserialize<'a> for i128 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
-    fn cbor_deserialize_from<R: Read<'a>>(
+    fn cbor_deserialize_from_with_profile<R: Read<'a>>(
         reader: &mut DepthAwareReaderGuard<'_, R>,
+        options: DecodeOptions,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -834,21 +951,26 @@ impl<'a> CborDeserialize<'a> for i128 {
         let tag_ib = InitialByte::peek(reader)?;
         // Tag 2 on the wire: decode as u128, then cast
         if tag_ib.0 == ib::consts::IB_UNSIGNED_BIG_NUM {
-            return Ok(Self::try_from(u128::cbor_deserialize_from(reader)?)?);
+            return Ok(Self::try_from(u128::cbor_deserialize_from_with_profile(
+                reader, options,
+            )?)?);
         }
 
-        // If not a bignum, fall back to the uXX chain
         let tag_mt = tag_ib.mt();
 
-        match tag_ib.mt() {
-            MajorType::Uint => return u64::cbor_deserialize_from(reader).map(Into::into),
+        match tag_mt {
+            MajorType::Uint => {
+                return u64::cbor_deserialize_from_with_profile(reader, options).map(Into::into);
+            }
             // Not via `i64`: `3b ff..ff` is `-2^64` (RFC 8949 Appendix A), which only `i128` holds
             MajorType::NegativeUint => {
+                let ai = tag_ib.ai();
                 reader.advance(1)?;
-                let n = u64::from(tag_ib.mt_ai().1.find_subsequent_len(reader)?);
+                let n = read_uint_argument(reader, ai)?;
+                ai.ensure_shortest(n, options, "integer")?;
                 return Ok(-1 - i128::from(n));
             }
-            MajorType::Tagged => {} // This is the only acceptable major type
+            MajorType::Tagged => {}
             _ => {
                 return Err(SeaboredDeError::IncorrectMajorType {
                     actual: tag_mt,
@@ -864,12 +986,14 @@ impl<'a> CborDeserialize<'a> for i128 {
                 expected: ib::consts::IB_NEGATIVE_BIG_NUM,
             });
         }
+        tag_ib.ai().ensure_shortest(3, options, "tag")?;
 
         // Skip over the Tag IB
         reader.advance(1)?;
 
-        let wire_bytes = std::borrow::Cow::<[u8]>::cbor_deserialize_from(reader)?;
-        let value_u128 = bignum_to_u128(&wire_bytes)?;
+        let wire_bytes =
+            std::borrow::Cow::<[u8]>::cbor_deserialize_from_with_profile(reader, options)?;
+        let value_u128 = bignum_to_u128(&wire_bytes, options)?;
         // Tag 3 means -1 - n, so n has to fit i128's positive range
         Ok(-1 - i128::try_from(value_u128)?)
     }
@@ -878,6 +1002,7 @@ impl<'a> CborDeserialize<'a> for i128 {
 #[cfg(test)]
 mod tests {
 
+    use super::CborBigInteger;
     use crate::{de::from_bytes, ser::CborSerialize};
 
     #[test]
@@ -1010,6 +1135,24 @@ mod tests {
         assert!(from_bytes::<i16>(&hex!("1a00008000")).is_err()); // 32768
         assert!(from_bytes::<i8>(&hex!("390080")).is_err()); // -129
         assert!(from_bytes::<i64>(&hex!("3bffffffffffffffff")).is_err()); // -2^64
+    }
+
+    #[test]
+    fn big_integer_normalizes_the_magnitude() {
+        assert_eq!(
+            CborBigInteger::new(false, vec![0, 0, 1]),
+            CborBigInteger::new(false, vec![1])
+        );
+        assert_eq!(
+            CborBigInteger::new(true, vec![0, 0]),
+            CborBigInteger::new(true, Vec::new())
+        );
+        assert!(!CborBigInteger::new(true, vec![0, 0]).is_zero());
+        assert!(CborBigInteger::new(false, vec![0, 0]).is_zero());
+        assert_eq!(
+            CborBigInteger::new(false, &b"\x00\x02"[..]).magnitude(),
+            &[2]
+        );
     }
 
     #[test]

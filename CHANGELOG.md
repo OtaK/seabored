@@ -6,14 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 0.2.0 - unreleased
 
-Hardening, native derive, recursion limits, bignum decoding, serde sentinel path. No byte changes for valid data;
-every break is a new rejection or removed UB.
+Hardening, native derive, recursion limits, bignum decoding, serde sentinel path. General output is
+unchanged except `Value` tag 2/3 normalization and `f16` NaN canonicalization; strict profiles
+canonicalize as documented. Other breaks are new rejections or removed UB.
 
 ### Added
 
 - `OwnedValue`: a `Value` that owns its contents and is `DeserializeOwned`, for decoders that cannot lend (`ciborium::from_reader`, streaming). `Value` borrows and can never satisfy that bound; its docs say so.
 - `Value::into_owned()`: drops the borrow, keeping major type and definiteness.
 - `CborSequence`: `IntoIterator` (owned and `&`), `Extend`, `FromIterator`. `FromIterator` builds definite-length; `Extend` keeps `mt`/`is_indefinite`.
+- Serialization profiles from draft-09: `Profile`, `DecodeOptions`, `CborSerialize::{cbor_serialize_to_with_profile, cbor_serialize_with_profile}`, `ser::{to_vec_with_profile, to_writer_with_profile}`, and `serde::{to_vec_with_profile, to_writer_with_profile}`. Convenience aliases: `ser::{to_vec_preferred_plus, to_vec_deterministic}`, `de::{from_bytes_preferred_plus, from_bytes_deterministic_checked}`, and `serde::{from_slice_with_profile, from_reader_with_profile}`. Strict profiles emit shortest arguments, definite containers/strings, canonical floats, and normalized bignums; `Deterministic` sorts maps recursively by encoded key bytes.
+- Checking decode: `CborDeserialize::cbor_deserialize_from_with_profile`, `de::{from_bytes_with_options, from_bytes_with_profile, skip_value_with_options}`, and `serde::{from_slice_with_options, from_reader_with_options}`. Strict checking rejects non-shortest arguments, indefinite containers/strings, non-canonical floats/NaNs, empty/leading-zero/fitting bignums, and unordered maps recursively.
+- `CborBigInteger` and `Value::BigInteger`: normalized tag 2/3 bignums (sign plus leading-zero-free magnitude). Tags 2/3 now decode to `Value::Integer` when the value fits major types 0/1 and to `Value::BigInteger` otherwise; encode writes them back as canonical tags 2/3. An empty magnitude is `0` for tag 2 and `-1` for tag 3; `is_zero()` reflects that.
+- Serde serialization of a chunked `Value` byte/text string keeps its string shape: indefinite under `General`, one definite string under strict profiles or for finite chunk sequences. Previously it serialized as an array of chunks.
+- `CborMap<K, V>`: typed map that sorts by encoded key bytes under `Deterministic`. Generic `CborSequence` map forms still error under `Deterministic` because their key/value split is unknown.
+- `#[cbor(with = module)]` now receives the effective profile through `module::cbor_serialize_to_with_profile(value, writer, profile)`.
 - Depth limit (256, `parsio::DepthAwareReader::DEFAULT_LIMIT`) on both paths: `de::from_bytes(_with_limit)`, `serde::from_slice_with_limit` / `from_reader_with_limit`, `serde::from_slice_complete` / `from_reader_complete` (exactly one item), `serde::Deserializer::{depth, limit, remaining}`.
 - `SeaboredDeError::{TrailingBytes(usize), BignumTooLarge(usize), MissingField, DuplicateField, UnexpectedKey, NonPreferredEncoding}`.
 - Native derive behind the `derive` feature: `CborSerialize` / `CborDeserialize` on structs and enums, with `#[cbor(key, tag, simple_value, with, default, skip, indefinite, profile, map, array)]`. Profiles `rfc` (default), `pref-plus`, and `deterministic`; deterministic output sorts map keys by encoded bytes and strict decode enforces/validates them.
@@ -50,6 +57,14 @@ every break is a new rejection or removed UB.
 
 - **Breaking:** `SeaboredSerError::ReservedSimpleValue(u8)`; `SimpleValue(20..=31)` errors.
 - **Breaking:** `Value::from_iter` builds definite-length (`82 01 02`, not `9f 01 02 ff`; profile §4.1 item 2). Indefinite is explicit via `CborSequence::new_indefinite`; decoded containers keep `is_indefinite`.
+- **Breaking:** `#[cbor(with = module)]` modules must provide `cbor_serialize_to_with_profile(value, writer, profile)` and `cbor_deserialize_from_with_profile(reader, options)`; the old encode/decode hooks are no longer used.
+- **Breaking:** `Value` no longer keeps tag 2/3 as `Value::Tagged`: fitting bignums become `Value::Integer`, larger ones `Value::BigInteger`, and leading zeroes are dropped even under `Profile::General`. Non-byte tag 2/3 payloads stay tagged unless checking.
+- **Breaking:** `CborDeserialize::cbor_deserialize_from_with_profile` is required. `cbor_deserialize_from` remains as the general/attribute-profile convenience method.
+- **Breaking:** `SeaboredSerError` is `#[non_exhaustive]`; added `ProfileUnsupported` and `IndefiniteForbidden`; `SeaboredDeError::ProfileUnsupported` covers unsupported streaming checking.
+- Strict serde `serialize_seq(None)` / `serialize_map(None)` buffer entries and emit definite headers; deterministic maps and structs buffer so they can sort by encoded key bytes.
+- Compatibility policy: `de::from_bytes`, `CborDeserialize::cbor_deserialize_from`, `CborSerialize::cbor_serialize*`, `serde::from_slice`, and `serde::to_vec` remain general and permissive. Draft-09 conformance requires the profile entry points. Derive attributes keep their meaning; runtime profile calls override them for that item.
+- README documents the profile APIs, the general-vs-preferred-plus recommendation (draft-09 §3.1), and CDDL's `.serial "prefp"` / `"dtrm"`.
+- Serde `from_slice_with_options` validates the whole item as `Value` before deserializing; `from_reader_with_options` returns `ProfileUnsupported` for checking decode because it cannot buffer.
 - **Breaking:** `CborDeserialize::cbor_deserialize_from` takes `&mut DepthAwareReaderGuard<'_, 'data, R>`.
   - Migrate: `T::cbor_deserialize_from(&mut &bytes[..])` → `de::from_bytes::<T>(&bytes)`. Custom readers: `let mut r = DepthAwareReader::from_reader(reader); let mut guard = r.enter()?;`, then pass `&mut guard`.
 - **Breaking:** `serde::Deserializer::new` takes `&mut DepthAwareReader` and returns `Result`; `into_inner` is gone. Use the entry points, or `remaining` for trailing bytes.
