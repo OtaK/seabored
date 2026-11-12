@@ -105,7 +105,7 @@ impl CborSerialize for CborFloat {
 impl<'a> CborDeserialize<'a> for CborFloat {
     #[inline]
     fn cbor_deserialize_from<R: Read<'a>>(
-        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+        reader: &mut DepthAwareReaderGuard<'_, R>,
     ) -> Result<Self, crate::error::SeaboredDeError> {
         Ok(Self(f64::cbor_deserialize_from(reader)?))
     }
@@ -114,7 +114,7 @@ impl<'a> CborDeserialize<'a> for CborFloat {
 impl<'a> CborDeserialize<'a> for f16 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn cbor_deserialize_from<R: Read<'a>>(
-        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+        reader: &mut DepthAwareReaderGuard<'_, R>,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -134,7 +134,7 @@ impl<'a> CborDeserialize<'a> for f16 {
 impl<'a> CborDeserialize<'a> for f32 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn cbor_deserialize_from<R: Read<'a>>(
-        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+        reader: &mut DepthAwareReaderGuard<'_, R>,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,
@@ -155,7 +155,7 @@ impl<'a> CborDeserialize<'a> for f32 {
 impl<'a> CborDeserialize<'a> for f64 {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn cbor_deserialize_from<R: Read<'a>>(
-        reader: &mut DepthAwareReaderGuard<'_, 'a, R>,
+        reader: &mut DepthAwareReaderGuard<'_, R>,
     ) -> Result<Self, SeaboredDeError>
     where
         Self: Sized + 'a,

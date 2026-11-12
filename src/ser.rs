@@ -18,6 +18,29 @@ pub trait CborSerialize {
     }
 }
 
+/// Write a definite-length CBOR preamble for `mt`.
+///
+/// `len` is the container length for bytes/strings/arrays/maps, or the tag
+/// number for `MajorType::Tagged`. Integer and simple-value major types are
+/// rejected: they have no complex preamble.
+#[cfg_attr(feature = "inline-nontrivial", inline)]
+pub fn write_preamble<W: Write>(
+    mt: MajorType,
+    len: u64,
+    writer: &mut W,
+) -> Result<usize, SeaboredSerError> {
+    match mt {
+        MajorType::Bytes
+        | MajorType::String
+        | MajorType::Array
+        | MajorType::Map
+        | MajorType::Tagged => {
+            CborIntegerValue::from(len).serialize_complex_mt_preamble(mt, writer)
+        }
+        _ => Err(SeaboredSerError::UnexpectedPreambleMajorType(mt)),
+    }
+}
+
 impl<T1, T2> CborSerialize for (T1, T2)
 where
     T1: CborSerialize,

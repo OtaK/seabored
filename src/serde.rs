@@ -37,22 +37,27 @@ mod serde_ser;
 /// CBOR deserializer over a depth-tracking reader: one guard per level, containers hand their
 /// entered guard to a child.
 pub struct Deserializer<'de, 'a, R: Read<'de>> {
-    reader: DepthAwareReaderGuard<'a, 'de, R>,
+    reader: DepthAwareReaderGuard<'a, R>,
+    _lifetime: std::marker::PhantomData<&'de ()>,
 }
 
 impl<'de, 'a, R: Read<'de>> Deserializer<'de, 'a, R> {
     /// Wraps `reader`, entering level 1; errors on depth overflow.
     #[inline]
-    pub fn new(reader: &'a mut DepthAwareReader<'de, R>) -> Result<Self, SeaboredDeError> {
+    pub fn new(reader: &'a mut DepthAwareReader<R>) -> Result<Self, SeaboredDeError> {
         Ok(Self {
             reader: reader.enter()?,
+            _lifetime: std::marker::PhantomData,
         })
     }
 
     /// Wraps an already-entered guard. Used to descend one level per container.
     #[inline]
-    pub(crate) fn from_guard(reader: DepthAwareReaderGuard<'a, 'de, R>) -> Self {
-        Self { reader }
+    pub(crate) fn from_guard(reader: DepthAwareReaderGuard<'a, R>) -> Self {
+        Self {
+            reader,
+            _lifetime: std::marker::PhantomData,
+        }
     }
 
     /// Current nesting depth (1 for the top-level item).
@@ -122,7 +127,7 @@ pub fn from_slice_complete<'de, T: ::serde_core::Deserialize<'de>>(
 pub fn from_reader<'de, T: ::serde_core::Deserialize<'de>, R: Read<'de>>(
     reader: R,
 ) -> Result<T, crate::error::SeaboredDeError> {
-    from_reader_with_limit(reader, DepthAwareReader::<'de, R>::DEFAULT_LIMIT)
+    from_reader_with_limit(reader, DepthAwareReader::<R>::DEFAULT_LIMIT)
 }
 
 #[inline]

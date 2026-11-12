@@ -1,0 +1,7 @@
+error: map and array are mutually exclusive
+ --> tests/derive/fail/conflicting_container_shapes.rs:3:10
+  |
+3 | #[derive(seabored::CborSerialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `seabored::CborSerialize` (in Nightly builds, run with -Z macro-backtrace for more info)
