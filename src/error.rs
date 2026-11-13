@@ -88,6 +88,9 @@ pub enum SeaboredDeError {
     MissingField { name: &'static str },
     #[error("Duplicate field: {name}")]
     DuplicateField { name: &'static str },
+    /// A standard set container already held the decoded sequence item.
+    #[error("Duplicate item in CBOR sequence")]
+    DuplicateSequenceItem,
     #[error("Unexpected key: {key}")]
     UnexpectedKey { key: String },
     /// The input is well-formed but not in the requested profile's preferred form.

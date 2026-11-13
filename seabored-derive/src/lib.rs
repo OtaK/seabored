@@ -11,8 +11,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
-    DeriveInput, Expr, ExprLit, ExprUnary, GenericParam, Index, Lifetime, LifetimeParam, Lit,
-    LitInt, LitStr, Member, Path, Type, UnOp,
+    DeriveInput, Expr, ExprLit, ExprUnary, GenericArgument, GenericParam, Index, Lifetime,
+    LifetimeParam, Lit, LitInt, LitStr, Member, Path, PathArguments, Type, UnOp,
     visit::{self, Visit},
 };
 
@@ -127,6 +127,8 @@ struct CborAttrs {
     profile: Option<Profile>,
     map: Flag,
     array: Flag,
+    sequence: Flag,
+    unordered: Flag,
 }
 
 #[derive(Debug, FromField)]
@@ -344,6 +346,15 @@ fn enum_variants(attrs: &CborAttrs) -> syn::Result<Vec<VariantInfo<'_>>> {
 fn validate(attrs: &CborAttrs) -> darling::Result<()> {
     let profile = attrs.profile.unwrap_or(Profile::Rfc);
 
+    if attrs.sequence.is_present() {
+        return validate_sequence(attrs);
+    }
+    if attrs.unordered.is_present() {
+        return Err(darling::Error::custom(
+            "unordered is only valid with sequence",
+        ));
+    }
+
     if attrs.map.is_present() && attrs.array.is_present() {
         return Err(darling::Error::custom(
             "map and array are mutually exclusive",
@@ -414,6 +425,107 @@ fn validate(attrs: &CborAttrs) -> darling::Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_sequence(attrs: &CborAttrs) -> darling::Result<()> {
+    if attrs.map.is_present() || attrs.array.is_present() {
+        return Err(darling::Error::custom(
+            "sequence cannot be combined with map or array",
+        ));
+    }
+    if attrs.tag.is_some() {
+        return Err(darling::Error::custom("sequence cannot be tagged"));
+    }
+
+    let fields = match &attrs.data {
+        Data::Struct(fields) => fields,
+        Data::Enum(_) => {
+            return Err(darling::Error::custom(
+                "sequence is only valid on a tuple newtype",
+            ));
+        }
+    };
+    if fields.style != Style::Tuple || fields.fields.len() != 1 {
+        return Err(darling::Error::custom(
+            "sequence is only valid on a tuple newtype with one field",
+        ));
+    }
+
+    let field = &fields.fields[0];
+    if field.key.is_some()
+        || field.tag.is_some()
+        || field.simple_value.is_present()
+        || field.with.is_some()
+        || field.default.is_some()
+        || field.skip.is_present()
+        || field.indefinite.is_present()
+    {
+        return Err(darling::Error::custom(
+            "sequence newtypes cannot carry field attributes",
+        ));
+    }
+
+    let _ = sequence_item(&field.ty)?;
+
+    if attrs.unordered.is_present() && attrs.profile == Some(Profile::Deterministic) {
+        return Err(darling::Error::custom(
+            "unordered sequences cannot use the deterministic profile",
+        ));
+    }
+
+    Ok(())
+}
+
+fn sequence_item(ty: &Type) -> syn::Result<&Type> {
+    let path = match ty {
+        Type::Path(path) if path.qself.is_none() => path,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "sequence requires a container with exactly one type parameter, such as Vec<T>",
+            ));
+        }
+    };
+    let segment = path.path.segments.last().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "sequence requires a container with exactly one type parameter, such as Vec<T>",
+        )
+    })?;
+    let args = match &segment.arguments {
+        PathArguments::AngleBracketed(args) => args,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "sequence requires a container with exactly one type parameter, such as Vec<T>",
+            ));
+        }
+    };
+
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let item = types.next().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "sequence requires a container with exactly one type parameter, such as Vec<T>",
+        )
+    })?;
+    if types.next().is_some() {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "sequence requires a container with exactly one type parameter, such as Vec<T>",
+        ));
+    }
+    if matches!(item, Type::Slice(_)) {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "sequence item type cannot be unsized; use Vec<T> or VecDeque<T>",
+        ));
+    }
+
+    Ok(item)
 }
 
 fn validate_fields(fields: &[FieldInfo<'_>], form: Form, profile: Profile) -> darling::Result<()> {
@@ -514,6 +626,25 @@ fn path_ends_with(ty: &Type, name: &str) -> bool {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SequenceKind {
+    Other,
+    BTreeSet,
+    HashSet,
+}
+
+fn sequence_kind(ty: &Type) -> SequenceKind {
+    // Aliases are indistinguishable here; only direct BTreeSet/HashSet names
+    // get the early duplicate check.
+    if path_ends_with(ty, "BTreeSet") {
+        SequenceKind::BTreeSet
+    } else if path_ends_with(ty, "HashSet") {
+        SequenceKind::HashSet
+    } else {
+        SequenceKind::Other
+    }
+}
+
 struct UsedParams<'a> {
     declared: &'a [syn::Ident],
     used: HashSet<String>,
@@ -578,7 +709,11 @@ fn serialize_generics<'a>(
 }
 
 fn unique_lifetime(generics: &syn::Generics) -> Lifetime {
-    let mut name = String::from("de");
+    unique_lifetime_named(generics, "de")
+}
+
+fn unique_lifetime_named(generics: &syn::Generics, base: &str) -> Lifetime {
+    let mut name = String::from(base);
     while generics
         .lifetimes()
         .any(|param| param.lifetime.ident == name.as_str())
@@ -623,6 +758,10 @@ fn generate(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenStream2
 }
 
 fn generate_struct(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenStream2> {
+    if attrs.sequence.is_present() {
+        return generate_sequence_struct(attrs, direction);
+    }
+
     let (form, named) = struct_form(attrs)?;
     let fields = struct_fields(attrs)?;
     let profile = attrs.profile.unwrap_or(Profile::Rfc);
@@ -730,6 +869,158 @@ fn generate_struct(attrs: &CborAttrs, direction: Direction) -> syn::Result<Token
                             reader,
                             #default_options,
                         )
+                    }
+                }
+            })
+        }
+    }
+}
+
+fn sequence_serialize_generics(attrs: &CborAttrs, inner: &Type, item: &Type) -> syn::Generics {
+    let mut generics = attrs.generics.clone();
+    let seq = unique_lifetime_named(&attrs.generics, "seq");
+    let predicates = generics.make_where_clause();
+    predicates.predicates.push(syn::parse_quote!(
+        for<#seq> & #seq #inner: ::core::iter::IntoIterator<Item = & #seq #item>
+    ));
+    predicates
+        .predicates
+        .push(syn::parse_quote!(#item: ::seabored::ser::CborSerialize));
+    generics
+}
+
+fn sequence_deserialize_generics(
+    attrs: &CborAttrs,
+    inner: &Type,
+    item: &Type,
+) -> (syn::Generics, Lifetime) {
+    let mut generics = attrs.generics.clone();
+    let de = unique_lifetime(&attrs.generics);
+    generics
+        .params
+        .insert(0, GenericParam::Lifetime(LifetimeParam::new(de.clone())));
+
+    for param in attrs.generics.lifetimes() {
+        let lifetime = param.lifetime.clone();
+        generics
+            .make_where_clause()
+            .predicates
+            .push(syn::parse_quote!(#de: #lifetime));
+    }
+
+    let predicates = generics.make_where_clause();
+    predicates.predicates.push(syn::parse_quote!(
+        #inner: ::core::default::Default + ::core::iter::Extend<#item> + #de
+    ));
+    predicates.predicates.push(syn::parse_quote!(
+        #item: ::seabored::de::CborDeserialize<#de> + #de
+    ));
+    match sequence_kind(inner) {
+        SequenceKind::Other => {}
+        SequenceKind::BTreeSet => predicates
+            .predicates
+            .push(syn::parse_quote!(#item: ::core::cmp::Ord)),
+        SequenceKind::HashSet => predicates.predicates.push(syn::parse_quote!(
+            #item: ::core::cmp::Eq + ::core::hash::Hash
+        )),
+    }
+
+    (generics, de)
+}
+
+fn generate_sequence_struct(attrs: &CborAttrs, direction: Direction) -> syn::Result<TokenStream2> {
+    let fields = struct_fields(attrs)?;
+    let field = fields.first().ok_or_else(|| {
+        syn::Error::new_spanned(
+            &attrs.ident,
+            "sequence is only valid on a tuple newtype with one field",
+        )
+    })?;
+    let item = sequence_item(field.ty)?;
+    let inner = field.ty;
+    let member = &field.member;
+    let ident = &attrs.ident;
+    let profile = attrs.profile.unwrap_or(Profile::Rfc);
+    let kind = sequence_kind(inner);
+
+    match direction {
+        Direction::Serialize => {
+            let generics = sequence_serialize_generics(attrs, inner, item);
+            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+            let default_profile = profile_expr(profile);
+            let unordered_guard = if attrs.unordered.is_present() {
+                quote! {
+                    if profile == ::seabored::profile::Profile::Deterministic {
+                        return ::core::result::Result::Err(
+                            ::seabored::error::SeaboredSerError::ProfileUnsupported {
+                                profile,
+                                what: "unordered sequence",
+                            },
+                        );
+                    }
+                }
+            } else {
+                quote!()
+            };
+
+            Ok(quote! {
+                #[automatically_derived]
+                impl #impl_generics ::seabored::sequence::CborSeqSerialize for #ident #ty_generics #where_clause {
+                    const DEFAULT_PROFILE: ::seabored::profile::Profile = #default_profile;
+
+                    fn cbor_sequence_serialize_to_with_profile<W: ::seabored::reexports::parsio::Write>(
+                        &self,
+                        writer: &mut W,
+                        profile: ::seabored::profile::Profile,
+                    ) -> ::core::result::Result<usize, ::seabored::error::SeaboredSerError> {
+                        #unordered_guard
+                        ::seabored::sequence::to_writer_with_profile(
+                            writer,
+                            &self.#member,
+                            profile,
+                        )
+                    }
+                }
+            })
+        }
+        Direction::Deserialize => {
+            let (impl_generics, de) = sequence_deserialize_generics(attrs, inner, item);
+            let (impl_generics, _, where_clause) = impl_generics.split_for_impl();
+            let (_, ty_generics, _) = attrs.generics.split_for_impl();
+            let default_options = default_decode_options(profile);
+            let decode_item = match kind {
+                SequenceKind::BTreeSet | SequenceKind::HashSet => quote! {
+                    if !items.insert(item) {
+                        return ::core::result::Result::Err(
+                            ::seabored::error::SeaboredDeError::DuplicateSequenceItem,
+                        );
+                    }
+                },
+                SequenceKind::Other => quote! {
+                    ::core::iter::Extend::extend(&mut items, ::core::iter::once(item));
+                },
+            };
+
+            Ok(quote! {
+                #[automatically_derived]
+                impl #impl_generics ::seabored::sequence::CborSeqDeserialize<#de> for #ident #ty_generics #where_clause {
+                    const DEFAULT_OPTIONS: ::seabored::profile::DecodeOptions = #default_options;
+
+                    fn cbor_sequence_deserialize_from<R: ::seabored::reexports::parsio::Read<#de>>(
+                        reader: ::seabored::reexports::parsio::DepthAwareReader<R>,
+                        options: ::seabored::profile::DecodeOptions,
+                    ) -> ::core::result::Result<Self, ::seabored::error::SeaboredDeError>
+                    where
+                        Self: 'de,
+                    {
+                        let mut items: #inner = ::core::default::Default::default();
+                        for item in ::seabored::sequence::Iter::<#de, R, #item>::new(reader)
+                            .with_options(options)
+                        {
+                            let item = item?;
+                            #decode_item
+                        }
+                        ::core::result::Result::Ok(Self(items))
                     }
                 }
             })

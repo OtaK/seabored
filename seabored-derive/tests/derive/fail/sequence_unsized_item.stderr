@@ -1,0 +1,5 @@
+error: sequence item type cannot be unsized; use Vec<T> or VecDeque<T>
+ --> tests/derive/fail/sequence_unsized_item.rs:5:12
+  |
+5 | struct Bad(Box<[u8]>);
+  |            ^^^

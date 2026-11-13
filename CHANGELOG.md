@@ -25,11 +25,18 @@ permissive; breaks are listed under Changed.
 - Depth limits on native and serde decoding (default 256), `_with_limit` variants, and
   complete-input serde entry points.
 - `CborContainer` iteration/extend support and `CborSimpleValue`.
-- Native RFC 8742 CBOR Sequences: `sequence::Iter`, `sequence::to_writer`, and
-  `sequence::to_writer_with_profile`.
+- Native RFC 8742 CBOR Sequences: `sequence::Iter`, `sequence::to_writer`,
+  `sequence::to_writer_with_profile`, `CborSeqSerialize`, and
+  `CborSeqDeserialize`.
+  - `#[cbor(sequence)]` derive for tuple newtypes, with generic container bounds
+    (`Vec`, `VecDeque`, `LinkedList`, `BTreeSet`, `HashSet`, `BinaryHeap`, and
+    compatible custom containers). `BTreeSet` and `HashSet` reject duplicate
+    decoded items at `insert`; other containers use `Extend` semantics.
+  - `#[cbor(sequence, unordered)]` rejects deterministic encoding.
   - Also added a serde RFC 8742 bridge: lazy `serde::sequence::Iter`, `from_reader`,
     `from_reader_with_options`, `to_writer`, and `to_writer_with_profile`.
-- New error variants for profiles, bignums, trailing bytes, and struct keys.
+- New error variants for profiles, bignums, trailing bytes, struct keys, and
+  duplicate sequence items.
 
 ### Fixed
 

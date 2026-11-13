@@ -133,6 +133,28 @@ The `DepthAwareReader` supplies the depth limit; each item starts at level 1.
 allocation. `to_writer` writes each item back to back; empty input and an empty slice
 are valid empty sequences. Use `Value` when items have different types.
 
+A newtype can own a sequence through the derive:
+
+```rust,ignore
+use seabored::sequence::CborSeqSerialize as _;
+
+#[derive(seabored::CborSerialize, seabored::CborDeserialize)]
+#[cbor(sequence)]
+struct Values(Vec<u32>);
+
+let bytes = Values(vec![1, 2, 3]).cbor_sequence_serialize()?;
+let values: Values = Values::cbor_sequence_from_bytes(&bytes)?;
+```
+
+The generated `CborSeqSerialize` / `CborSeqDeserialize` traits are separate from
+the normal item traits, so a sequence newtype cannot be nested. The inner type
+needs exactly one type parameter plus `Default + Extend<T>` and
+`&Inner: IntoIterator<Item = &T>`. This covers `Vec`, `VecDeque`, `LinkedList`,
+`BTreeSet`, `HashSet`, `BinaryHeap`, and matching custom containers. Standard
+sets reject duplicate decoded items at `insert`. Custom containers use `Extend`
+semantics. Mark unordered containers with
+`#[cbor(sequence, unordered)]`; deterministic encoding then returns an error.
+
 The Serde bridge returns a lazy `Iter`:
 
 ```rust,ignore

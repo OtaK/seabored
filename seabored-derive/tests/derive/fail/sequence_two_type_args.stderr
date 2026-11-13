@@ -1,0 +1,5 @@
+error: sequence requires a container with exactly one type parameter, such as Vec<T>
+ --> tests/derive/fail/sequence_two_type_args.rs:7:12
+  |
+7 | struct Bad(HashMap<u8, u8>);
+  |            ^^^^^^^

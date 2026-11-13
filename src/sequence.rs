@@ -123,3 +123,85 @@ where
     }
     Ok(written)
 }
+
+/// Serialize a newtype as an RFC 8742 CBOR sequence.
+///
+/// Sequence types do not implement [`CborSerialize`], so they cannot be nested
+/// as a field or array element. Use [`crate::sequence::to_writer`] or this
+/// trait's convenience methods at the top level.
+pub trait CborSeqSerialize {
+    /// Profile used by [`Self::cbor_sequence_serialize`].
+    const DEFAULT_PROFILE: Profile = Profile::General;
+
+    /// Write the sequence with an explicit profile.
+    fn cbor_sequence_serialize_to_with_profile<W: parsio::Write>(
+        &self,
+        writer: &mut W,
+        profile: Profile,
+    ) -> Result<usize, SeaboredSerError>;
+
+    /// Write the sequence with [`Self::DEFAULT_PROFILE`].
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_sequence_serialize_to<W: parsio::Write>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, SeaboredSerError> {
+        self.cbor_sequence_serialize_to_with_profile(writer, Self::DEFAULT_PROFILE)
+    }
+
+    /// Encode the sequence with [`Self::DEFAULT_PROFILE`].
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_sequence_serialize(&self) -> Result<Vec<u8>, SeaboredSerError> {
+        let mut buf = Vec::new();
+        self.cbor_sequence_serialize_to(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Encode the sequence with an explicit profile.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_sequence_serialize_with_profile(
+        &self,
+        profile: Profile,
+    ) -> Result<Vec<u8>, SeaboredSerError> {
+        let mut buf = Vec::new();
+        self.cbor_sequence_serialize_to_with_profile(&mut buf, profile)?;
+        Ok(buf)
+    }
+}
+
+/// Deserialize a newtype from an RFC 8742 CBOR sequence.
+///
+/// The reader is consumed, so a sequence can only be decoded at the top level.
+pub trait CborSeqDeserialize<'de>: Sized {
+    /// Options used by [`Self::cbor_sequence_from_bytes`].
+    const DEFAULT_OPTIONS: DecodeOptions = DecodeOptions::GENERAL;
+
+    /// Decode a sequence with explicit options.
+    fn cbor_sequence_deserialize_from<R: Read<'de>>(
+        reader: DepthAwareReader<R>,
+        options: DecodeOptions,
+    ) -> Result<Self, SeaboredDeError>
+    where
+        Self: 'de;
+
+    /// Decode a sequence from a byte slice with [`Self::DEFAULT_OPTIONS`].
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_sequence_from_bytes(bytes: &'de [u8]) -> Result<Self, SeaboredDeError>
+    where
+        Self: 'de,
+    {
+        Self::cbor_sequence_from_bytes_with_options(bytes, Self::DEFAULT_OPTIONS)
+    }
+
+    /// Decode a sequence from a byte slice with explicit options.
+    #[cfg_attr(feature = "inline-nontrivial", inline)]
+    fn cbor_sequence_from_bytes_with_options(
+        bytes: &'de [u8],
+        options: DecodeOptions,
+    ) -> Result<Self, SeaboredDeError>
+    where
+        Self: 'de,
+    {
+        Self::cbor_sequence_deserialize_from(DepthAwareReader::from_reader(bytes), options)
+    }
+}
