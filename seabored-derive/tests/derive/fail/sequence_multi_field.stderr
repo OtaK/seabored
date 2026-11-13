@@ -1,0 +1,7 @@
+error: sequence is only valid on a tuple newtype with one field
+ --> tests/derive/fail/sequence_multi_field.rs:3:10
+  |
+3 | #[derive(seabored::CborSerialize)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `seabored::CborSerialize` (in Nightly builds, run with -Z macro-backtrace for more info)

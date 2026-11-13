@@ -29,6 +29,8 @@ derive both.
 - `#[cbor(tag = N)]`: CBOR tag around the whole item.
 - `#[cbor(profile = "rfc" | "pref-plus" | "deterministic")]`: default `"rfc"`.
 - `#[cbor(map)]` / `#[cbor(array)]`: named structs only; default is map.
+- `#[cbor(sequence)]`: tuple newtype; emits an RFC 8742 sequence instead of one
+  CBOR item. `#[cbor(sequence, unordered)]` also rejects deterministic encoding.
 
 ## Field attributes
 
@@ -39,6 +41,57 @@ derive both.
 - `default` or `default = expr`: value for a missing map key.
 - `skip`: omit on encode, fill from `default` on decode.
 - `indefinite`: encode `Vec`/`BTreeSet`/`HashSet` fields as `9f … ff`.
+
+## CBOR sequences
+
+```rust,ignore
+use seabored::sequence::CborSeqSerialize as _;
+
+#[derive(seabored::CborSerialize, seabored::CborDeserialize)]
+#[cbor(sequence)]
+struct Values(Vec<u32>);
+
+let bytes = Values(vec![1, 2, 3]).cbor_sequence_serialize()?;
+assert_eq!(bytes, [0x01, 0x02, 0x03]);
+
+let values: Values = Values::cbor_sequence_from_bytes(&bytes)?;
+```
+
+`#[cbor(sequence)]` generates `sequence::CborSeqSerialize` and
+`sequence::CborSeqDeserialize`, not `CborSerialize` / `CborDeserialize`. A
+sequence type cannot be used as a field, array element, or sequence item.
+
+The inner type is accepted by its bounds, not by name. It needs exactly one type
+parameter and must satisfy:
+
+- `Default + Extend<T>` for decoding;
+- `&Inner: IntoIterator<Item = &T>` for encoding;
+- `T: CborSerialize` / `T: CborDeserialize` for the items.
+
+That covers `Vec<T>`, `VecDeque<T>`, `LinkedList<T>`, `BTreeSet<T>`,
+`HashSet<T>`, `BinaryHeap<T>`, and custom containers with the same bounds.
+`Box<[T]>`, arrays, and maps do not fit.
+
+Each item is written back to back with no array header, length, or terminator.
+An empty container writes zero bytes. Decoding consumes the whole reader, so it
+is top-level only. `BTreeSet` and `HashSet` return
+`SeaboredDeError::DuplicateSequenceItem` as soon as `insert` reports a
+duplicate. Other containers use `Extend`: their own insertion semantics apply,
+including any lossy behavior.
+
+Mark hash-based or otherwise unordered containers:
+
+```rust,ignore
+#[derive(seabored::CborSerialize, seabored::CborDeserialize)]
+#[cbor(sequence, unordered)]
+struct Unique(std::collections::HashSet<u32>);
+```
+
+`unordered` rejects `Profile::Deterministic` at encode time. Without it,
+deterministic output is only as stable as the container's iteration order.
+
+`tag`, `map`, `array`, field attributes, and `profile = "deterministic"` with
+`unordered` are rejected.
 
 ## Enums
 
