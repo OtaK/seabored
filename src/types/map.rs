@@ -13,7 +13,7 @@ const MAX_PREALLOC_CAPACITY: usize = 256;
 
 /// A CBOR map with typed keys and values.
 ///
-/// Unlike [`CborSequence`](crate::types::CborSequence), the key/value split is known, so
+/// Unlike [`CborContainer`](crate::types::CborContainer), the key/value split is known, so
 /// [`Profile::Deterministic`] can sort entries by their encoded key bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CborMap<K: CborSerialize, V: CborSerialize> {

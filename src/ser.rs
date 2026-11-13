@@ -4,7 +4,7 @@ use crate::{
     ib,
     mt::MajorType,
     profile::Profile,
-    types::{CborBigInteger, CborInteger, CborIntegerValue, CborSequence, IB_LIMIT},
+    types::{CborBigInteger, CborContainer, CborInteger, CborIntegerValue, IB_LIMIT},
 };
 
 use parsio::Write;
@@ -154,7 +154,7 @@ impl CborSerialize for Value<'_> {
             Value::String(cow) => {
                 CborIntegerValue::serialize_inline_bytes(cow.as_bytes(), MajorType::String, writer)
             }
-            Value::Sequence(seq) => serialize_value_sequence(seq, writer, profile),
+            Value::Array(seq) => serialize_value_array(seq, writer, profile),
             Value::Map(seq) => serialize_value_map(seq, writer, profile),
             Value::Tagged((tag, value)) => serialize_value_tagged(*tag, value, writer, profile),
             Value::SimpleValue(value) => serialize_simple_value(*value, writer),
@@ -180,8 +180,8 @@ fn serialize_simple_value<W: Write>(value: u8, writer: &mut W) -> Result<usize, 
 }
 
 #[cfg_attr(feature = "inline-nontrivial", inline)]
-fn serialize_value_sequence<W: Write>(
-    seq: &CborSequence<Value<'_>>,
+fn serialize_value_array<W: Write>(
+    seq: &CborContainer<Value<'_>>,
     writer: &mut W,
     profile: Profile,
 ) -> Result<usize, SeaboredSerError> {
@@ -211,7 +211,7 @@ fn serialize_value_sequence<W: Write>(
                     _ => {
                         return Err(SeaboredSerError::ProfileUnsupported {
                             profile,
-                            what: "string chunk in a Value sequence",
+                            what: "string chunk in a Value array",
                         });
                     }
                 }
@@ -220,14 +220,14 @@ fn serialize_value_sequence<W: Write>(
         }
         _ => Err(SeaboredSerError::ProfileUnsupported {
             profile,
-            what: "Value::Sequence major type",
+            what: "Value::Array major type",
         }),
     }
 }
 
 #[cfg_attr(feature = "inline-nontrivial", inline)]
 fn serialize_value_map<W: Write>(
-    seq: &CborSequence<(Value<'_>, Value<'_>)>,
+    seq: &CborContainer<(Value<'_>, Value<'_>)>,
     writer: &mut W,
     profile: Profile,
 ) -> Result<usize, SeaboredSerError> {
@@ -347,7 +347,7 @@ pub(crate) fn value_bytes(
 ) -> Result<Vec<u8>, SeaboredSerError> {
     match value {
         Value::Bytes(bytes) => Ok(bytes.to_vec()),
-        Value::Sequence(seq) if seq.mt == MajorType::Bytes => {
+        Value::Array(seq) if seq.mt == MajorType::Bytes => {
             let mut bytes = Vec::new();
             for chunk in seq.iter() {
                 match chunk {

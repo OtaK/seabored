@@ -65,7 +65,7 @@ item.
 
 Native impls exist for integers, floats, `bool`, `String`, `Cow<str>`,
 `Cow<[u8]>`, `Vec<T>`, `BTreeSet<T>`, `HashSet<T>`, `Option<T>`, `Box<T>`,
-`CborInteger`, `CborFloat`, `CborSequence<T>` (serialize), `CborMap<K, V>`, `CborSimpleValue`,
+`CborInteger`, `CborFloat`, `CborContainer<T>` (serialize), `CborMap<K, V>`, `CborSimpleValue`,
 `RawValue`, and `Value`.
 
 `Vec<u8>` encodes as an array of integers. Use `Cow<[u8]>` for byte strings.

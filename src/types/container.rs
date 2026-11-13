@@ -3,8 +3,12 @@ use parsio::Write;
 
 const MAX_PREALLOC_CAPACITY: usize = 256;
 
+/// A CBOR container: an array, a map, or an indefinite-length string's chunks.
+///
+/// This is not an RFC 8742 CBOR Sequence. A sequence is encoded and decoded with
+/// [`crate::sequence`]; it has no container header.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct CborSequence<T: CborSerialize> {
+pub struct CborContainer<T: CborSerialize> {
     inner: Vec<T>,
     pub mt: MajorType,
     /// Indefinite form (`9f`/`bf` … `ff`, RFC 8949 §3.2.2). Decoding preserves it; set `false`
@@ -12,7 +16,7 @@ pub struct CborSequence<T: CborSerialize> {
     pub is_indefinite: bool,
 }
 
-impl<T: CborSerialize> Default for CborSequence<T> {
+impl<T: CborSerialize> Default for CborContainer<T> {
     #[inline(always)]
     fn default() -> Self {
         Self {
@@ -23,7 +27,7 @@ impl<T: CborSerialize> Default for CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> IntoIterator for CborSequence<T> {
+impl<T: CborSerialize> IntoIterator for CborContainer<T> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
 
@@ -34,7 +38,7 @@ impl<T: CborSerialize> IntoIterator for CborSequence<T> {
     }
 }
 
-impl<'a, T: CborSerialize> IntoIterator for &'a CborSequence<T> {
+impl<'a, T: CborSerialize> IntoIterator for &'a CborContainer<T> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
 
@@ -45,7 +49,7 @@ impl<'a, T: CborSerialize> IntoIterator for &'a CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> Extend<T> for CborSequence<T> {
+impl<T: CborSerialize> Extend<T> for CborContainer<T> {
     /// Appends items; `mt` and `is_indefinite` are kept.
     #[inline(always)]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
@@ -53,16 +57,16 @@ impl<T: CborSerialize> Extend<T> for CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> FromIterator<T> for CborSequence<T> {
+impl<T: CborSerialize> FromIterator<T> for CborContainer<T> {
     /// Definite-length array (RFC 8949 §3.2.2, profile §4.1 item 2). Indefinite stays explicit:
-    /// [`CborSequence::new_indefinite`].
+    /// [`CborContainer::new_indefinite`].
     #[inline(always)]
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self::from(iter.into_iter().collect::<Vec<T>>())
     }
 }
 
-impl<T: CborSerialize> CborSequence<T> {
+impl<T: CborSerialize> CborContainer<T> {
     #[inline(always)]
     pub fn new_finite(mt: MajorType, len: usize) -> Self {
         Self {
@@ -90,7 +94,7 @@ impl<T: CborSerialize> CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> std::ops::Deref for CborSequence<T> {
+impl<T: CborSerialize> std::ops::Deref for CborContainer<T> {
     type Target = Vec<T>;
 
     #[inline(always)]
@@ -99,14 +103,14 @@ impl<T: CborSerialize> std::ops::Deref for CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> std::ops::DerefMut for CborSequence<T> {
+impl<T: CborSerialize> std::ops::DerefMut for CborContainer<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<T: CborSerialize> From<Vec<T>> for CborSequence<T> {
+impl<T: CborSerialize> From<Vec<T>> for CborContainer<T> {
     #[inline(always)]
     fn from(inner: Vec<T>) -> Self {
         Self {
@@ -117,7 +121,7 @@ impl<T: CborSerialize> From<Vec<T>> for CborSequence<T> {
     }
 }
 
-impl<T: CborSerialize> CborSerialize for CborSequence<T> {
+impl<T: CborSerialize> CborSerialize for CborContainer<T> {
     #[cfg_attr(feature = "inline-nontrivial", inline)]
     fn cbor_serialize_to<W: Write>(
         &self,
@@ -163,7 +167,7 @@ impl<T: CborSerialize> CborSerialize for CborSequence<T> {
         if self.mt == MajorType::Map && profile == Profile::Deterministic {
             return Err(crate::error::SeaboredSerError::ProfileUnsupported {
                 profile,
-                what: "generic map sequence",
+                what: "generic map container",
             });
         }
 

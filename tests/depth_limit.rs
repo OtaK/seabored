@@ -86,7 +86,7 @@ fn nesting_below_the_limit_still_round_trips() {
 
     let mut current = &value;
     let mut seen = 0;
-    while let Value::Sequence(seq) = current {
+    while let Value::Array(seq) = current {
         seen += 1;
         current = seq.first().unwrap();
     }

@@ -8,6 +8,7 @@ pub mod ib;
 pub mod io;
 pub mod mt;
 pub mod profile;
+pub mod sequence;
 pub mod ser;
 #[cfg(feature = "serde")]
 pub mod serde;
@@ -42,10 +43,10 @@ pub enum Value<'a> {
     Bytes(std::borrow::Cow<'a, [u8]>),
     String(std::borrow::Cow<'a, str>),
     /// An array. [`FromIterator`] builds definite-length; a decoded indefinite one keeps its form
-    /// (clear [`CborSequence::is_indefinite`](types::CborSequence::is_indefinite) to re-encode definite).
-    Sequence(types::CborSequence<Value<'a>>),
-    /// A map, with the same caveat as [`Value::Sequence`].
-    Map(types::CborSequence<(Value<'a>, Value<'a>)>),
+    /// (clear [`CborContainer::is_indefinite`](types::CborContainer::is_indefinite) to re-encode definite).
+    Array(types::CborContainer<Value<'a>>),
+    /// A map, with the same caveat as [`Value::Array`].
+    Map(types::CborContainer<(Value<'a>, Value<'a>)>),
     Tagged((types::CborIntegerValue, Box<Value<'a>>)),
     SimpleValue(u8),
     Bool(bool),
@@ -62,7 +63,7 @@ impl Value<'_> {
             Value::BigInteger(_) => MajorType::Tagged,
             Value::Bytes(_) => MajorType::Bytes,
             Value::String(_) => MajorType::String,
-            Value::Sequence(seq) => seq.mt,
+            Value::Array(seq) => seq.mt,
             Value::Map(_) => MajorType::Map,
             Value::Tagged(_) => MajorType::Tagged,
             _ => MajorType::SimpleValueOrFloat,
@@ -118,14 +119,14 @@ impl Value<'_> {
         }
     }
 
-    pub fn as_sequence(&self) -> Option<&types::CborSequence<Self>> {
+    pub fn as_array(&self) -> Option<&types::CborContainer<Self>> {
         match self {
-            Self::Sequence(v) => Some(v),
+            Self::Array(v) => Some(v),
             _ => None,
         }
     }
 
-    pub fn as_map(&self) -> Option<&types::CborSequence<(Self, Self)>> {
+    pub fn as_map(&self) -> Option<&types::CborContainer<(Self, Self)>> {
         match self {
             Self::Map(v) => Some(v),
             _ => None,
@@ -134,15 +135,15 @@ impl Value<'_> {
 }
 
 /// Builds a definite-length array (profile `draft-ietf-cbor-serialization-09` §4.1 item 2).
-/// Indefinite: `Value::Sequence(CborSequence::new_indefinite(MajorType::Array))`.
+/// Indefinite: `Value::Array(CborContainer::new_indefinite(MajorType::Array))`.
 impl<'a> FromIterator<Value<'a>> for Value<'a> {
     #[inline(always)]
     fn from_iter<T: IntoIterator<Item = Value<'a>>>(iter: T) -> Self {
         let iter = iter.into_iter();
         // The hint is capacity only: the header is written from the final item count
-        let mut seq = types::CborSequence::new_finite(MajorType::Array, iter.size_hint().0);
+        let mut seq = types::CborContainer::new_finite(MajorType::Array, iter.size_hint().0);
         seq.extend(iter);
-        Self::Sequence(seq)
+        Self::Array(seq)
     }
 }
 
@@ -151,7 +152,7 @@ impl<'a> FromIterator<(Value<'a>, Value<'a>)> for Value<'a> {
     #[inline(always)]
     fn from_iter<T: IntoIterator<Item = (Value<'a>, Value<'a>)>>(iter: T) -> Self {
         let iter = iter.into_iter();
-        let mut seq = types::CborSequence::new_finite(MajorType::Map, iter.size_hint().0);
+        let mut seq = types::CborContainer::new_finite(MajorType::Map, iter.size_hint().0);
         seq.extend(iter);
         Self::Map(seq)
     }
@@ -184,7 +185,7 @@ impl ::serde_core::Serialize for Value<'_> {
             Value::Float(cbor_float) => serializer.serialize_f64(**cbor_float),
             Value::Bytes(cow) => serializer.serialize_bytes(cow),
             Value::String(cow) => serializer.serialize_str(cow),
-            Value::Sequence(cbor_sequence) => {
+            Value::Array(cbor_sequence) => {
                 use ::serde_core::ser::SerializeSeq;
 
                 if matches!(cbor_sequence.mt, MajorType::Bytes | MajorType::String) {
@@ -445,7 +446,7 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
                     arr.push(elem);
                 }
 
-                Ok(Value::Sequence(arr.into()))
+                Ok(Value::Array(arr.into()))
             }
 
             #[inline(always)]
@@ -454,7 +455,7 @@ impl<'a, 'de: 'a> ::serde_core::Deserialize<'de> for Value<'a> {
                 A: ::serde_core::de::MapAccess<'de>,
             {
                 // `Vec::into()` would say `Array`; a map's sequence carries the map major type
-                let mut vmap = types::CborSequence::new_finite(
+                let mut vmap = types::CborContainer::new_finite(
                     crate::mt::MajorType::Map,
                     map.size_hint().unwrap_or(0).min(256),
                 );
@@ -482,10 +483,10 @@ impl<'a> Value<'a> {
             Value::Float(value) => Value::Float(value),
             Value::Bytes(bytes) => Value::Bytes(std::borrow::Cow::Owned(bytes.into_owned())),
             Value::String(string) => Value::String(std::borrow::Cow::Owned(string.into_owned())),
-            Value::Sequence(seq) => Value::Sequence(map_sequence(seq, Value::into_owned)),
-            Value::Map(map) => {
-                Value::Map(map_sequence(map, |(k, v)| (k.into_owned(), v.into_owned())))
-            }
+            Value::Array(seq) => Value::Array(map_container(seq, Value::into_owned)),
+            Value::Map(map) => Value::Map(map_container(map, |(k, v)| {
+                (k.into_owned(), v.into_owned())
+            })),
             Value::Tagged((tag, value)) => Value::Tagged((tag, Box::new(value.into_owned()))),
             Value::SimpleValue(value) => Value::SimpleValue(value),
             Value::Bool(value) => Value::Bool(value),
@@ -496,14 +497,14 @@ impl<'a> Value<'a> {
 }
 
 /// Converts the elements of a sequence, keeping its major type and its definiteness
-fn map_sequence<T: crate::ser::CborSerialize, U: crate::ser::CborSerialize>(
-    seq: types::CborSequence<T>,
+fn map_container<T: crate::ser::CborSerialize, U: crate::ser::CborSerialize>(
+    seq: types::CborContainer<T>,
     mut convert: impl FnMut(T) -> U,
-) -> types::CborSequence<U> {
+) -> types::CborContainer<U> {
     let mut converted = if seq.is_indefinite {
-        types::CborSequence::new_indefinite(seq.mt)
+        types::CborContainer::new_indefinite(seq.mt)
     } else {
-        types::CborSequence::new_finite(seq.mt, seq.len())
+        types::CborContainer::new_finite(seq.mt, seq.len())
     };
 
     converted.extend(seq.into_iter().map(&mut convert));

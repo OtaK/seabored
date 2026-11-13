@@ -4,6 +4,8 @@ use crate::{
 };
 use parsio::{DepthAwareReader, DepthAwareReaderGuard, Read, Write};
 
+pub mod sequence;
+
 // Lil hack to pass over the serde fence
 thread_local! {
     pub(crate) static TAG: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
@@ -19,7 +21,9 @@ thread_local! {
 pub(crate) const CHUNKED_STRING_TYP_NAME: &str = "seabored::serde::ChunkedString";
 
 /// Payload for [`CHUNKED_STRING_TYP_NAME`]: the string chunks, serialized as a sequence.
-pub(crate) struct ChunkedValue<'a, 'b>(pub(crate) &'b crate::types::CborSequence<crate::Value<'a>>);
+pub(crate) struct ChunkedValue<'a, 'b>(
+    pub(crate) &'b crate::types::CborContainer<crate::Value<'a>>,
+);
 
 impl ::serde_core::Serialize for ChunkedValue<'_, '_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -36,14 +40,14 @@ impl ::serde_core::Serialize for ChunkedValue<'_, '_> {
     }
 }
 
-/// Serializes a `Value::Sequence` whose major type is Bytes or String as one CBOR string.
+/// Serializes a `Value::Array` whose major type is Bytes or String as one CBOR string.
 ///
 /// General serialization keeps an indefinite chunked string as chunks; strict profiles and
 /// finite chunk sequences concatenate into one definite string. Foreign serializers see a
 /// newtype around the chunk sequence.
 pub(crate) fn serialize_chunked_string<'a, S>(
     serializer: S,
-    chunks: &crate::types::CborSequence<crate::Value<'a>>,
+    chunks: &crate::types::CborContainer<crate::Value<'a>>,
 ) -> Result<S::Ok, S::Error>
 where
     S: ::serde_core::Serializer,

@@ -35,3 +35,10 @@ path = "fuzz_targets/checking.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "sequence"
+path = "fuzz_targets/sequence.rs"
+test = false
+doc = false
+bench = false

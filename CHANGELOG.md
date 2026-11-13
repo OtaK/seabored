@@ -24,7 +24,11 @@ permissive; breaks are listed under Changed.
 - `OwnedValue` and `Value::into_owned()` for decoders that cannot lend.
 - Depth limits on native and serde decoding (default 256), `_with_limit` variants, and
   complete-input serde entry points.
-- `CborSequence` iteration/extend support and `CborSimpleValue`.
+- `CborContainer` iteration/extend support and `CborSimpleValue`.
+- Native RFC 8742 CBOR Sequences: `sequence::Iter`, `sequence::to_writer`, and
+  `sequence::to_writer_with_profile`.
+  - Also added a serde RFC 8742 bridge: lazy `serde::sequence::Iter`, `from_reader`,
+    `from_reader_with_options`, `to_writer`, and `to_writer_with_profile`.
 - New error variants for profiles, bignums, trailing bytes, and struct keys.
 
 ### Fixed
@@ -57,7 +61,10 @@ permissive; breaks are listed under Changed.
   become `Value::Integer`, larger ones `Value::BigInteger`, and leading zeroes are
   normalized.
 - **Breaking:** `Value::from_iter` builds definite-length containers. Use
-  `CborSequence::new_indefinite` for the indefinite form.
+  `CborContainer::new_indefinite` for the indefinite form.
+- **Breaking:** `CborSequence` is renamed to `CborContainer`, `Value::Sequence` to
+  `Value::Array`, and `Value::as_sequence` to `Value::as_array`. The old names described
+  CBOR containers, not RFC 8742 sequences.
 - **Breaking:** `SeaboredDeError::AllowedDepthOverflow` is removed (overflow now comes
   from `parsio`); `SimpleValue(20..=31)` is rejected; `SeaboredSerError` is now
   `#[non_exhaustive]`.

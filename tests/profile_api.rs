@@ -6,7 +6,7 @@ use seabored::{
     mt::MajorType,
     ser,
     ser::CborSerialize as _,
-    types::CborSequence,
+    types::CborContainer,
 };
 
 #[test]
@@ -27,7 +27,7 @@ fn native_encode_helpers_and_aliases() {
 
 #[test]
 fn encode_aliases_enforce_strict_profiles() {
-    let mut sequence = CborSequence::new_indefinite(MajorType::Array);
+    let mut sequence = CborContainer::new_indefinite(MajorType::Array);
     sequence.extend([1u8, 2u8]);
 
     assert_eq!(

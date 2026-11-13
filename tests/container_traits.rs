@@ -1,9 +1,9 @@
-//! `CborSequence` satisfies the standard sequence traits; `Deref` alone only bought method calls.
+//! `CborContainer` satisfies the standard collection traits; `Deref` alone only bought method calls.
 
-use seabored::{Value, mt::MajorType, ser::CborSerialize, types::CborSequence};
+use seabored::{Value, mt::MajorType, ser::CborSerialize, types::CborContainer};
 
-fn small() -> CborSequence<Value<'static>> {
-    let mut seq = CborSequence::new_finite(MajorType::Array, 2);
+fn small() -> CborContainer<Value<'static>> {
+    let mut seq = CborContainer::new_finite(MajorType::Array, 2);
     seq.push(Value::Integer(1u8.into()));
     seq.push(Value::Integer(2u8.into()));
     seq
@@ -11,7 +11,7 @@ fn small() -> CborSequence<Value<'static>> {
 
 #[test]
 fn from_iterator_builds_the_profile_form() {
-    let seq: CborSequence<Value> = (1u8..=2).map(|n| Value::Integer(n.into())).collect();
+    let seq: CborContainer<Value> = (1u8..=2).map(|n| Value::Integer(n.into())).collect();
     // A finite array: `82 01 02`, not the forbidden indefinite `9f 01 02 ff`
     assert_eq!(seq.cbor_serialize().unwrap(), [0x82, 0x01, 0x02]);
     assert!(!seq.is_indefinite);
@@ -27,7 +27,7 @@ fn extend_keeps_the_existing_form() {
     assert!(!finite.is_indefinite);
 
     // Indefinite stays indefinite, and a map stays a map
-    let mut map = CborSequence::new_indefinite(MajorType::Map);
+    let mut map = CborContainer::new_indefinite(MajorType::Map);
     map.extend([(Value::Integer(1u8.into()), Value::Integer(2u8.into()))]);
     let bytes = map.cbor_serialize().unwrap();
     assert_eq!(bytes, [0xbf, 0x01, 0x02, 0xff]);

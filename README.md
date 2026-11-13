@@ -12,6 +12,7 @@ Compatible with WASM.
 Complies to the following RFCs:
 
 - [RFC8949](https://www.rfc-editor.org/rfc/rfc8949.html) - The canonical CBOR RFC
+- [RFC8742](https://www.rfc-editor.org/rfc/rfc8742.html) - CBOR Sequences
 - [draft-ietf-cbor-serialization-09](https://datatracker.ietf.org/doc/draft-ietf-cbor-serialization/) (28 September 2026) - Defines preferred-plus and deterministic serialization.
 
 ## Documentation
@@ -103,10 +104,50 @@ pub fn cbor_serialize_to_with_profile<W: Write>(
 ) -> Result<usize, SeaboredSerError>;
 
 pub fn cbor_deserialize_from_with_profile<'de, R: Read<'de>>(
-    reader: &mut DepthAwareReaderGuard<'_, 'de, R>,
+    reader: &mut DepthAwareReaderGuard<'_, R>,
     options: seabored::DecodeOptions,
 ) -> Result<T, SeaboredDeError>;
 ```
+
+### CBOR Sequences (RFC 8742)
+
+A CBOR Sequence is zero or more CBOR items concatenated in one stream. It is not a
+data item: there is no array header, count, or terminator. `Vec<T>` still serializes
+as a CBOR array.
+
+```rust,ignore
+use seabored::{sequence, Value};
+use seabored::reexports::parsio::DepthAwareReader;
+
+let reader = DepthAwareReader::from_reader(&bytes[..]);
+let items: Vec<Value> = sequence::Iter::new(reader)
+    .collect::<Result<_, _>>()?;
+
+let mut out = Vec::new();
+sequence::to_writer(&mut out, &items)?;
+sequence::to_writer_with_profile(&mut out, &items, seabored::Profile::PreferredPlus)?;
+```
+
+The `DepthAwareReader` supplies the depth limit; each item starts at level 1.
+`sequence::Iter` decodes one item per `next`, so large sequences need no full
+allocation. `to_writer` writes each item back to back; empty input and an empty slice
+are valid empty sequences. Use `Value` when items have different types.
+
+The Serde bridge returns a lazy `Iter`:
+
+```rust,ignore
+let items: Vec<MyType> = seabored::serde::sequence::from_reader(
+    DepthAwareReader::from_reader(&bytes[..]),
+)
+.collect::<Result<_, _>>()?;
+let mut out = Vec::new();
+seabored::serde::sequence::to_writer(&mut out, &items)?;
+```
+
+`serde::sequence::from_reader` returns a lazy `Iter`; collect it or consume one item
+at a time. `from_reader_with_options` returns a `Result<Iter, _>` because checking
+options are rejected up front. Serde checking options are unsupported for this
+streaming bridge; use the native `sequence::Iter` for checking decodes.
 
 ## Quirks
 
