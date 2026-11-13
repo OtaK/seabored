@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use half::f16;
 use pretty_assertions::{assert_eq, assert_ne};
 use seabored::{
-    Value, mt::MajorType, ser::CborSerialize as _, types::CborBigInteger, types::CborSequence,
+    Value, mt::MajorType, ser::CborSerialize as _, types::CborBigInteger, types::CborContainer,
 };
 
 macro_rules! assert_value_eq_bytes {
@@ -23,13 +23,13 @@ macro_rules! assert_value_eq_bytes {
 
 /// Appendix A's indefinite containers, requested explicitly: `FromIterator` builds definite.
 fn indefinite_array<'a, I: IntoIterator<Item = Value<'a>>>(items: I) -> Value<'a> {
-    let mut seq = CborSequence::new_indefinite(MajorType::Array);
+    let mut seq = CborContainer::new_indefinite(MajorType::Array);
     seq.extend(items);
-    Value::Sequence(seq)
+    Value::Array(seq)
 }
 
 fn indefinite_map<'a, I: IntoIterator<Item = (Value<'a>, Value<'a>)>>(items: I) -> Value<'a> {
-    let mut seq = CborSequence::new_indefinite(MajorType::Map);
+    let mut seq = CborContainer::new_indefinite(MajorType::Map);
     seq.extend(items);
     Value::Map(seq)
 }
@@ -216,9 +216,9 @@ fn appendix_a() -> Result<()> {
     assert_value_eq_bytes!(Value::String("\u{00fc}".into()), "62c3bc");
     assert_value_eq_bytes!(Value::String("\u{6c34}".into()), "63e6b0b4");
     assert_value_eq_bytes!(Value::String("𐅑".into()), "64f0908591");
-    assert_value_eq_bytes!(Value::Sequence(Default::default()), "80");
+    assert_value_eq_bytes!(Value::Array(Default::default()), "80");
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             (1u8..=3)
                 .map(|v| Value::Integer(v.into()))
                 .collect::<Vec<_>>()
@@ -228,15 +228,11 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             (vec![
                 Value::Integer(1u8.into()),
-                Value::Sequence(
-                    (vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()
-                ),
-                Value::Sequence(
-                    (vec![Value::Integer(4u8.into()), Value::Integer(5u8.into())]).into()
-                )
+                Value::Array((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
+                Value::Array((vec![Value::Integer(4u8.into()), Value::Integer(5u8.into())]).into())
             ])
             .into()
         ),
@@ -244,7 +240,7 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             (1u8..=25)
                 .map(|v| Value::Integer(v.into()))
                 .collect::<Vec<_>>()
@@ -254,13 +250,13 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Map(CborSequence::default().with_mt(MajorType::Map)),
+        Value::Map(CborContainer::default().with_mt(MajorType::Map)),
         "a0"
     );
 
     assert_value_eq_bytes!(
         Value::Map(
-            CborSequence::from(
+            CborContainer::from(
                 [(1u8, 2u8), (3u8, 4u8)]
                     .into_iter()
                     .map(|(k, v)| (Value::Integer(k.into()), Value::Integer(v.into())))
@@ -273,11 +269,11 @@ fn appendix_a() -> Result<()> {
 
     assert_value_eq_bytes!(
         Value::Map(
-            CborSequence::from(vec![
+            CborContainer::from(vec![
                 (Value::String("a".into()), Value::Integer(1u8.into())),
                 (
                     Value::String("b".into()),
-                    Value::Sequence(
+                    Value::Array(
                         vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())].into()
                     )
                 )
@@ -288,11 +284,11 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             vec![
                 Value::String("a".into()),
                 Value::Map(
-                    CborSequence::from(vec![(
+                    CborContainer::from(vec![(
                         Value::String("b".into()),
                         Value::String("c".into())
                     )])
@@ -306,7 +302,7 @@ fn appendix_a() -> Result<()> {
 
     assert_value_eq_bytes!(
         Value::Map(
-            CborSequence::from(
+            CborContainer::from(
                 ["a", "b", "c", "d", "e"]
                     .into_iter()
                     .map(|k| (
@@ -322,21 +318,21 @@ fn appendix_a() -> Result<()> {
 
     assert_value_eq_bytes!(
         {
-            let mut seq = CborSequence::new_indefinite(MajorType::Bytes);
+            let mut seq = CborContainer::new_indefinite(MajorType::Bytes);
             seq.extend([
                 Value::Bytes((&hex_literal::hex!("0102")).into()),
                 Value::Bytes((&hex_literal::hex!("030405")).into()),
             ]);
-            Value::Sequence(seq)
+            Value::Array(seq)
         },
         "5f42010243030405ff"
     );
 
     assert_value_eq_bytes!(
         {
-            let mut seq = CborSequence::new_indefinite(MajorType::String);
+            let mut seq = CborContainer::new_indefinite(MajorType::String);
             seq.extend([Value::String("strea".into()), Value::String("ming".into())]);
-            Value::Sequence(seq)
+            Value::Array(seq)
         },
         "7f657374726561646d696e67ff"
     );
@@ -346,7 +342,7 @@ fn appendix_a() -> Result<()> {
     assert_value_eq_bytes!(
         indefinite_array([
             Value::Integer(1u8.into()),
-            Value::Sequence((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
+            Value::Array((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
             indefinite_array([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
         ]),
         "9f018202039f0405ffff"
@@ -355,19 +351,17 @@ fn appendix_a() -> Result<()> {
     assert_value_eq_bytes!(
         indefinite_array([
             Value::Integer(1u8.into()),
-            Value::Sequence((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
-            Value::Sequence((vec![Value::Integer(4u8.into()), Value::Integer(5u8.into())]).into())
+            Value::Array((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
+            Value::Array((vec![Value::Integer(4u8.into()), Value::Integer(5u8.into())]).into())
         ]),
         "9f01820203820405ff"
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             (vec![
                 Value::Integer(1u8.into()),
-                Value::Sequence(
-                    (vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()
-                ),
+                Value::Array((vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]).into()),
                 indefinite_array([Value::Integer(4u8.into()), Value::Integer(5u8.into())])
             ])
             .into()
@@ -376,11 +370,11 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             vec![
                 Value::Integer(1u8.into()),
                 indefinite_array(vec![Value::Integer(2u8.into()), Value::Integer(3u8.into())]),
-                Value::Sequence(CborSequence::from(vec![
+                Value::Array(CborContainer::from(vec![
                     Value::Integer(4u8.into()),
                     Value::Integer(5u8.into())
                 ]))
@@ -407,7 +401,7 @@ fn appendix_a() -> Result<()> {
     );
 
     assert_value_eq_bytes!(
-        Value::Sequence(
+        Value::Array(
             vec![
                 Value::String("a".into()),
                 indefinite_map([(Value::String("b".into()), Value::String("c".into()))])
@@ -454,15 +448,15 @@ fn from_iter_is_definite_length() -> Result<()> {
     );
 
     // A decoded indefinite container can be re-encoded in the preferred form by clearing the flag,
-    // which is what the documentation on `CborSequence::is_indefinite` says to do
+    // which is what the documentation on `CborContainer::is_indefinite` says to do
     let decoded = seabored::de::from_bytes::<Value>(&hex_literal::hex!("9f0102ff"))?;
-    let Value::Sequence(mut seq) = decoded else {
+    let Value::Array(mut seq) = decoded else {
         unreachable!("expected an indefinite-length array");
     };
     assert!(seq.is_indefinite);
     seq.is_indefinite = false;
     assert_eq!(
-        Value::Sequence(seq).cbor_serialize()?,
+        Value::Array(seq).cbor_serialize()?,
         hex_literal::hex!("820102")
     );
 

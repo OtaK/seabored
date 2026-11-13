@@ -9,12 +9,12 @@ version = "0.2.0-pre.0"
 edition = "2024"
 rust-version = "1.95"
 include = ["src/**/*", "LICENSE-*", "README.md"]
-description = "Implementation of the CBOR data format. Implements RFC8949 with the preferred-plus recommendations"
+description = "Implementation of the CBOR data format. Implements RFC8949 with the preferred-plus recommendations plus RFC8742"
 readme = "README.md"
 documentation = "https://docs.rs/seabored"
 repository = "https://github.com/OtaK/seabored"
 license = "MIT OR Apache-2.0"
-keywords = ["cbor", "serde", "rfc8949", "preferred-plus"]
+keywords = ["cbor", "serde", "rfc8949", "rfc8742", "preferred-plus"]
 categories = ["parser-implementations", "encoding", "wasm"]
 authors = ["Mathieu Amiot <amiot.mathieu@gmail.com>"]
 

@@ -74,7 +74,9 @@ pub enum SeaboredDeError {
     IndefiniteLen,
     #[error("Not well-formed CBOR: {0}")]
     NotWellFormed(&'static str),
-    #[error("A CBOR Sequence has the wrong number of elements, expected {expected}, but got {got}")]
+    #[error(
+        "A CBOR container has the wrong number of elements, expected {expected}, but got {got}"
+    )]
     WrongLen { expected: usize, got: usize },
     #[error("The array holds more elements than the {expected} the type asked for")]
     TooManyElements { expected: usize },

@@ -10,7 +10,9 @@ use crate::{
     mt::MajorType,
     profile::DecodeOptions,
     ser::CborSerialize as _,
-    types::{CborBigInteger, CborInteger, CborIntegerValue, CborSequence, validate_float_encoding},
+    types::{
+        CborBigInteger, CborContainer, CborInteger, CborIntegerValue, validate_float_encoding,
+    },
 };
 
 /// Reads a single CBOR item from a byte slice, up to
@@ -379,7 +381,7 @@ fn decode_value_indefinite<'a, R: Read<'a>>(
 
     match mt {
         MajorType::Bytes | MajorType::String => {
-            let mut seq = CborSequence::new_indefinite(mt);
+            let mut seq = CborContainer::new_indefinite(mt);
             let mut reader = reader.enter()?;
             while reader.peek_byte()? != ib::consts::IB_BREAK {
                 InitialByte::peek(&mut reader)?.expect_string_chunk(mt)?;
@@ -389,10 +391,10 @@ fn decode_value_indefinite<'a, R: Read<'a>>(
                 )?)
             }
             reader.advance(1)?;
-            Ok(Value::Sequence(seq))
+            Ok(Value::Array(seq))
         }
         MajorType::Array => {
-            let mut seq = CborSequence::new_indefinite(mt);
+            let mut seq = CborContainer::new_indefinite(mt);
             let mut reader = reader.enter()?;
             while reader.peek_byte()? != ib::consts::IB_BREAK {
                 seq.push(Value::cbor_deserialize_from_with_profile(
@@ -401,10 +403,10 @@ fn decode_value_indefinite<'a, R: Read<'a>>(
                 )?)
             }
             reader.advance(1)?;
-            Ok(Value::Sequence(seq))
+            Ok(Value::Array(seq))
         }
         MajorType::Map => {
-            let mut seq = CborSequence::new_indefinite(mt);
+            let mut seq = CborContainer::new_indefinite(mt);
             let mut reader = reader.enter()?;
             while reader.peek_byte()? != ib::consts::IB_BREAK {
                 seq.push(<(Value, Value)>::cbor_deserialize_from_with_profile(
@@ -539,9 +541,9 @@ pub(crate) fn bignum_or_tagged<'a>(
 ) -> Result<Value<'a>, SeaboredDeError> {
     let bytes: Cow<'a, [u8]> = match payload {
         Value::Bytes(bytes) => bytes,
-        Value::Sequence(seq) if seq.mt == MajorType::Bytes => {
+        Value::Array(seq) if seq.mt == MajorType::Bytes => {
             if !seq.iter().all(|chunk| matches!(chunk, Value::Bytes(_))) {
-                return bignum_unsupported(tag, Value::Sequence(seq), options);
+                return bignum_unsupported(tag, Value::Array(seq), options);
             }
             let mut bytes = Vec::new();
             for chunk in seq {
@@ -600,7 +602,7 @@ fn decode_value_array<'a, R: Read<'a>>(
     ai.ensure_shortest(u64::from(value_or_len), options, "array length")?;
     let len: usize = value_or_len.try_into()?;
     let mut seq =
-        CborSequence::new_finite(MajorType::Array, len.min(reader.remaining().unwrap_or(len)));
+        CborContainer::new_finite(MajorType::Array, len.min(reader.remaining().unwrap_or(len)));
     let mut reader = reader.enter()?;
     for _ in 0..len {
         seq.push(Value::cbor_deserialize_from_with_profile(
@@ -608,7 +610,7 @@ fn decode_value_array<'a, R: Read<'a>>(
             options,
         )?)
     }
-    Ok(Value::Sequence(seq))
+    Ok(Value::Array(seq))
 }
 
 fn decode_value_map<'a, R: Read<'a>>(
@@ -619,7 +621,7 @@ fn decode_value_map<'a, R: Read<'a>>(
 ) -> Result<Value<'a>, SeaboredDeError> {
     ai.ensure_shortest(u64::from(value_or_len), options, "map length")?;
     let len: usize = value_or_len.try_into()?;
-    let mut seq = CborSequence::new_finite(
+    let mut seq = CborContainer::new_finite(
         MajorType::Map,
         len.min(reader.remaining().unwrap_or(len) / 2),
     );

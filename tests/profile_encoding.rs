@@ -6,7 +6,7 @@ use seabored::{
     error::SeaboredSerError,
     mt::MajorType,
     ser::CborSerialize as _,
-    types::{CborMap, CborSequence},
+    types::{CborContainer, CborMap},
 };
 
 #[test]
@@ -141,8 +141,8 @@ fn value_biginteger_encodes_as_a_canonical_tag() {
 }
 
 #[test]
-fn strict_profiles_reject_an_indefinite_sequence() {
-    let mut sequence = CborSequence::new_indefinite(MajorType::Array);
+fn strict_profiles_reject_an_indefinite_container() {
+    let mut sequence = CborContainer::new_indefinite(MajorType::Array);
     sequence.extend([1u8, 2u8]);
 
     assert_eq!(
@@ -338,9 +338,9 @@ mod serde_encoding {
         );
 
         // A finite chunk sequence is concatenated even under general serialization.
-        let mut finite = CborSequence::new_finite(MajorType::Bytes, 2);
+        let mut finite = CborContainer::new_finite(MajorType::Bytes, 2);
         finite.extend([Value::Bytes(vec![1].into()), Value::Bytes(vec![2].into())]);
-        let finite = Value::Sequence(finite);
+        let finite = Value::Array(finite);
         assert_eq!(
             seabored::serde::to_vec(&finite).unwrap(),
             hex_literal::hex!("420102")

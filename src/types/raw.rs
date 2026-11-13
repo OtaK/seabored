@@ -181,7 +181,7 @@ mod tests {
         );
         assert_eq!(map["null_key"], Value::Null);
 
-        let expected_arr = Value::Sequence(
+        let expected_arr = Value::Array(
             vec![
                 Value::Integer(1u8.into()),
                 Value::Integer(2u8.into()),

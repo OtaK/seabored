@@ -1,15 +1,16 @@
+mod container;
 mod float;
 mod integer;
 mod map;
 #[cfg(feature = "hazmat")]
 mod raw;
-mod seq;
 mod simple;
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::hash::Hash;
 
+pub use container::CborContainer;
 pub use float::CborFloat;
 pub(crate) use float::validate_float_encoding;
 pub use integer::{CborBigInteger, CborInteger};
@@ -18,7 +19,6 @@ pub use map::CborMap;
 use parsio::{DepthAwareReaderGuard, Read, Write};
 #[cfg(feature = "hazmat")]
 pub use raw::RawValue;
-pub use seq::CborSequence;
 pub use simple::CborSimpleValue;
 
 use crate::{
